@@ -241,7 +241,7 @@ footer b{color:var(--shell-red)}
       <span><i style="background:#FFF1F1;box-shadow:inset 0 0 0 1px #F3B9BA"></i>Failed a check — please verify</span>
       <span><i style="background:#EFF7FF"></i>Auto-repaired from the row's arithmetic</span>
       <span><i style="background:var(--shell-yellow)"></i>Report total line</span>
-      <span>Every cell is editable — click and type, then export. Flags carry through to the workbook.</span>
+      <span>Every cell is editable — click and type, then export. The exported sheet stays plain; findings go to its Validation sheet.</span>
     </div>
   </section>
 
@@ -1023,7 +1023,6 @@ function commit(page,td){
    monospace header block and the Shell styling both depend on)
    ============================================================ */
 const RED_DK='FFA81317', INK='FF333333', LINE='FFDDDCDB',
-      FLAG_BG='FFFFF1F1', FIX_BG='FFEFF7FF',
       MONO='Consolas', SANS='Calibri';
 
 /* widths line up with COLS */
@@ -1056,35 +1055,42 @@ function safeName(s,used){
 }
 
 /* The report header, reproduced exactly as printed, in one merged monospace cell. */
+const HDR_PT=9, HDR_LINE_PT=12.4;      // 9pt Consolas needs ~12.4pt of line box
+
 function writeHeaderBlock(ws,p,width){
-  const lines=(p.head&&p.head.length)?p.head.slice():[
+  let lines=(p.head&&p.head.length)?p.head.slice():[
     (p.meta.report||'MTD STOCK REPORT')+(p.meta.terminal?'   '+p.meta.terminal:'')];
-  const n=Math.max(lines.length,1);
-  ws.mergeCells(1,1,n,width);
+  /* keep the printed text exactly, but drop blank lines the reader invented so the
+     block sits tight against its rule */
+  lines=lines.map(l=>l.replace(/\s+$/,'')).filter(l=>l.trim()!=='');
+  if(!lines.length) lines=['MTD STOCK REPORT'];
+
+  /* One merged row rather than several: a multi-row merge lets Excel distribute
+     the text unevenly and clip the first line. */
+  ws.mergeCells(1,1,1,width);
   const c=ws.getCell(1,1);
   c.value=lines.join('\n');
-  c.font={name:MONO,size:9,color:{argb:INK}};
-  c.alignment={vertical:'top',horizontal:'left',wrapText:true,indent:0};
-  c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFFFFFFF'}};
+  c.font={name:MONO,size:HDR_PT,color:{argb:INK}};
+  c.alignment={vertical:'top',horizontal:'left',wrapText:true};
   c.border={bottom:thin('FF808080')};
-  for(let r=1;r<=n;r++) ws.getRow(r).height=13.5;
-  return n;
+  ws.getRow(1).height=Math.ceil(lines.length*HDR_LINE_PT)+3;
+  return 1;
 }
 
 /* One merged strip of the fields parsed out of that header. Kept as a single
    cell so nothing can clip or collide with a neighbouring column. */
 function writeMetaStrip(ws,p,row,width){
   const m=p.meta;
-  const bits=[['Terminal',m.terminal],['Month',m.month],['Units',m.units],
-              ['Page',m.page],['Supplier',m.supplier],['Source',p.source],
-              ['Mapping',p.mode]]
+  /* the block above already prints terminal, month, units, page and supplier,
+     so only the two facts about the conversion itself are repeated here */
+  const bits=[['Source',p.source],['Column mapping',p.mode]]
              .filter(x=>x[1]).map(([k,v])=>k+': '+v);
   ws.mergeCells(row,1,row,width);
   const c=ws.getCell(row,1);
   c.value=bits.join('     ·     ');
-  c.font={name:SANS,size:8,italic:true,color:{argb:'FF767676'}};
+  c.font={name:SANS,size:8,color:{argb:'FF8C8C8C'}};
   c.alignment={vertical:'middle',horizontal:'left'};
-  ws.getRow(row).height=16;
+  ws.getRow(row).height=12;
 }
 
 /* Deliberately unstyled apart from the rule underneath, so the sheet reads like
@@ -1117,25 +1123,10 @@ function styleDataRow(ws,row,offset,src,isTotal){
     if(isTotal){
       /* the report rules a line above its Total and prints it plain */
       cell.border={top:thin('FF808080')};
-    } else if(src){
-      /* COLS 2..10 are nums 0..8 (10 being the merged Gauge Total Type),
-         COLS 11 is Gain/Loss and COLS 12 is Percent Thruput */
-      let idx=-1;
-      if(dc>=2 && dc<=10) idx=dc-2;
-      else if(dc===11) idx=I_GL;
-      else if(dc===12) idx=I_PCT;
-      if(idx>=0){
-        /* the only tinting left: a cell that failed a check, or one the
-           arithmetic filled in. Both are findings, not decoration. */
-        if(src.flags && src.flags.includes(idx)){
-          cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:FLAG_BG}};
-          cell.font={name:MONO,size:9,bold:true,color:{argb:RED_DK}};
-        } else if(src.fixed && src.fixed.includes(idx)){
-          cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:FIX_BG}};
-          cell.font={name:MONO,size:9,color:{argb:'FF0B5394'}};
-        }
-      }
     }
+    /* No conditional tinting: the exported sheet stays plain. Cells that failed a
+       check, and cells the arithmetic filled in, are listed on the Validation
+       sheet and highlighted in the on-screen review grid instead. */
   }
 }
 
@@ -1155,7 +1146,7 @@ function buildPageSheet(wb,p,used){
   p.rows.forEach(r=>{ row++; putRow(ws,row,rowArray(r)); styleDataRow(ws,row,0,r,false); });
   if(p.total){ row++; putRow(ws,row,rowArray(p.total)); styleDataRow(ws,row,0,p.total,true); }
 
-  ws.views=[{state:'frozen',xSplit:1,ySplit:headRow}];
+  ws.views=[{state:'frozen',ySplit:headRow}];
   return ws;
 }
 
