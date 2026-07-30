@@ -204,14 +204,14 @@ footer b{color:var(--shell-red)}
           <span class="d">Uses the report's own arithmetic (Close Book = movements, Gain/Loss = Gauge − Book) to recover a single bad cell per row.</span></span>
         </label>
         <label class="opt">
-          <input type="checkbox" id="optValidate" checked>
+          <input type="checkbox" id="optValidate">
           <span><span class="h">Add a Validation sheet</span>
-          <span class="d">Lists every row that fails a balance check plus column totals vs. the report's Total line.</span></span>
+          <span class="d">Off by default. Adds one extra tab listing any row that fails a balance check, any cell the arithmetic filled in, and column totals vs. the report's Total line.</span></span>
         </label>
         <label class="opt">
-          <input type="checkbox" id="optCombined" checked>
+          <input type="checkbox" id="optCombined">
           <span><span class="h">Add a Combined sheet</span>
-          <span class="d">All pages stacked into one table with terminal, month and source-file columns.</span></span>
+          <span class="d">Off by default. Adds one extra tab with every page stacked into a single table, for when you want to filter across several pages at once.</span></span>
         </label>
         <label class="opt">
           <input type="checkbox" id="optSharpen" checked>
