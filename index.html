@@ -268,7 +268,7 @@ footer b{color:var(--shell-red)}
    Parser — tuned to the Toptech TMS7 MTD STOCK REPORT layout
    ============================================================ */
 const COLS = ['Product','Open Balance','Receipts','Disposals Bulk',
-  'Disposals Non-Bulk','Company Use','Other','Stock Adj','Close Book','Gauge Total','Type',
+  'Disposals Non-Bulk','Company Use','Other','Stock Adj','Close Book','Gauge Total Type',
   'Gain/Loss','Percent Thruput'];
 /* Code and name are kept apart internally (the code drives validation and matching)
    but the report prints them as one column, so that is how they are exported. */
@@ -342,26 +342,69 @@ function calibrate(dataTokens){
   return at;
 }
 
+/* Letters the reader most often returns in place of a digit. Only ever applied
+   to a token that has landed squarely on a numeric column, never to Type. */
+const DIGIT_LOOKALIKE={O:'0',o:'0',Q:'0',D:'0',U:'0',I:'1',l:'1',i:'1',
+  Z:'2',z:'2',E:'3',A:'4',S:'5',s:'5',G:'6',b:'6',T:'7',B:'8',g:'9',q:'9'};
+function salvageDigits(t){
+  let s=String(t).replace(/[\[\]{}<>|"'`£$€¥*:;]/g,'');
+  let sign=''; if(/^[-–—−~]/.test(s)){ sign='-'; s=s.slice(1); }
+  let out='';
+  for(const ch of s){
+    if(/[\d.]/.test(ch)) out+=ch;
+    else if(DIGIT_LOOKALIKE[ch]!==undefined) out+=DIGIT_LOOKALIKE[ch];
+    else return null;
+  }
+  if(!/\d/.test(out)) return null;
+  const n=parseFloat(sign+out);
+  return isNaN(n)?null:n;
+}
+
 /* Place each token in the column its right edge lines up with. */
 function anchorRow(tk,at){
   const nums=new Array(NUMCOLS).fill(null), dist=new Array(NUMCOLS).fill(Infinity);
-  const nameTk=[]; let type='';
+  const nameTk=[], salvaged=[]; let type='';
   const tol=i=>{
     const l=i>0?(at[i]-at[i-1])/2:6, r=i<at.length-1?(at[i+1]-at[i])/2:6;
     return Math.max(2,Math.min(5,Math.min(l,r)));
   };
+  /* Type is the one text column, sitting between Gauge Total and Gain/Loss.
+     It occupies only the strip that belongs to neither of those two columns. */
+  const inTypeGap=e=>at.length>=NUMCOLS &&
+    e>at[I_GAUGE]+tol(I_GAUGE) && e<at[I_GL]-tol(I_GL);
+
   for(const w of tk){
     let bi=-1,bd=Infinity;
     for(let i=0;i<at.length;i++){ const d=Math.abs(w.e-at[i]); if(d<bd){bd=d;bi=i;} }
-    const fits = bi>=0 && bd<=tol(bi);
-    if(fits && isNum(w.t)){
-      if(bd<dist[bi]){ nums[bi]=toNum(w.t); dist[bi]=bd; }
+
+    /* A token sitting on a numeric column is a number, even when the reader
+       returned a letter for one of its digits. It must never become Type. */
+    if(bi>=0 && bd<=tol(bi)){
+      if(bd<dist[bi]){
+        if(isNum(w.t)){
+          nums[bi]=toNum(w.t); dist[bi]=bd;
+          const k=salvaged.indexOf(bi);            // a clean read supersedes a salvaged one
+          if(k>=0) salvaged.splice(k,1);
+        }
+        else {
+          const sv=salvageDigits(w.t);
+          if(sv!==null){ nums[bi]=sv; dist[bi]=bd; if(!salvaged.includes(bi)) salvaged.push(bi); }
+        }
+      }
+      else if(!type && /^[A-Za-z]{1,3}$/.test(w.t) && !ZEROISH.test(w.t) &&
+              (bi===I_GAUGE||bi===I_GL) && nums[bi]!==null){
+        /* Gauge Total or Gain/Loss already has a closer, better token, so a stray
+           letter here is not a misread digit — it is the Type code. */
+        type=w.t.toUpperCase();
+      }
       continue;
     }
     if(w.e<at[0]-1){ nameTk.push(w); continue; }
-    if(!type && /^[A-Za-z]{1,3}$/.test(w.t) && !ZEROISH.test(w.t)) type=w.t.toUpperCase();
+    if(!type && inTypeGap(w.e) && /^[A-Za-z]{1,3}$/.test(w.t) && !ZEROISH.test(w.t))
+      type=w.t.toUpperCase();
   }
-  return {name:nameTk.map(w=>w.t).join(' '),nums,type,complete:nums.every(v=>v!==null)};
+  return {name:nameTk.map(w=>w.t).join(' '),nums,type,salvaged,
+          positional:true,complete:nums.every(v=>v!==null)};
 }
 
 /* Fallback: walk in from the right collecting numeric columns. Exact for
@@ -411,14 +454,20 @@ function parseReport(rawLines){
     /* ---- report header metadata ---- */
     if((m=t.match(/\*{2,}\s*(.+?)\s*\*{2,}/))){
       meta.system=m[1].trim();
-      const term=m[1].match(/([A-Za-z][A-Za-z0-9]*-[A-Za-z0-9]+)\s*$/);
+      const term=m[1].match(/([A-Za-z][A-Za-z0-9]{2,}-[A-Za-z0-9]{2,})/);
       if(term) meta.terminal=term[1].toUpperCase();
     }
     if((m=t.match(/\bDate:\s*([\d\/\-.]+)/i)))      meta.date=m[1];
     if((m=t.match(/\bTime:\s*([\d:]+)/i)))          meta.time=m[1];
     if((m=t.match(/\bPage:\s*(\S+)/i)))             meta.page=m[1];
     if((m=t.match(/For\s+Month\s+of\s+([A-Za-z]+\s*\d{0,4})/i))) meta.month=m[1].trim();
-    if((m=t.match(/Activity\s+for:\s*(.+?)(?:\s{2,}|Supplier:|$)/i))) meta.activity=m[1].trim();
+    if((m=t.match(/Activity\s+for:\s*(.+?)(?:\s{2,}|Supplier:|$)/i))){
+      meta.activity=m[1].trim();
+      if(!meta.terminal){
+        const tm=meta.activity.match(/-\s*([A-Za-z][A-Za-z0-9]{2,})\s*$/);
+        if(tm) meta.terminal=tm[1].toUpperCase();
+      }
+    }
     if((m=t.match(/Supplier:\s*(.+?)(?:\s{2,}|NET|GROSS|$)/i)))  meta.supplier=m[1].trim();
     if(/NET\s+GALLONS/i.test(t))   meta.units='NET GALLONS';
     if(/GROSS\s+GALLONS/i.test(t)) meta.units='GROSS GALLONS';
@@ -482,11 +531,36 @@ function padTo(a,n){ const o=a.slice(0,n); while(o.length<n) o.unshift(null); re
    ============================================================ */
 const MOVE = [I_OPEN,I_RCPT,I_DBULK,I_DNB,I_CUSE,I_OTHER,I_ADJ];
 
+/* A salvaged cell is a letter that was read as a digit — the least trustworthy
+   value in the row. Where the report's own arithmetic disagrees with it, the
+   arithmetic wins outright rather than going through the usual ranking. */
+function reconcileSalvaged(row){
+  const n=row.nums, sv=row.salvaged||[];
+  if(!sv.length) return;
+
+  if(n[I_BOOK]!==null && MOVE.every(i=>n[i]!==null)){
+    const bal=MOVE.reduce((a,i)=>a+n[i],0);
+    if(Math.abs(bal-n[I_BOOK])>0.51){
+      const t=[...MOVE,I_BOOK].filter(i=>sv.includes(i));
+      if(t.length===1) solveBalance(row,t[0]);
+    }
+  }
+
+  const g=n[I_GAUGE],b=n[I_BOOK],gl=n[I_GL];
+  if(g!==null&&b!==null&&gl!==null&&Math.abs((g-b)-gl)>0.51){
+    if(sv.includes(I_GL)&&!sv.includes(I_GAUGE))       n[I_GL]=g-b;
+    else if(sv.includes(I_GAUGE)&&!sv.includes(I_GL))  n[I_GAUGE]=b+gl;
+  }
+}
+
 function validateRow(row,repair){
-  row.flags=[]; row.fixed=[];
+  row.flags=[]; row.fixed=(row.salvaged||[]).slice();
   const n=row.nums;
-  /* A short row means the reader lost a whole column — never guess at those, always flag. */
-  const canRepair = repair && row.complete!==false;
+  /* With column anchors every cell's position is known, so a blank cell means one
+     unreadable value and the arithmetic can safely fill it in. With the right-to-left
+     walk a short row means the columns shifted, so nothing may be guessed at. */
+  const canRepair = repair && (row.positional===true || row.complete!==false);
+  if(canRepair) reconcileSalvaged(row);
 
   /* fill a lone missing cell in the balance equation */
   const missing=[...MOVE,I_BOOK].filter(i=>n[i]===null);
@@ -517,7 +591,8 @@ function validateRow(row,repair){
   }
 
   row.nums.forEach((v,i)=>{ if(v===null && !row.fixed.includes(i)) row.flags.push(i); });
-  row.flags=[...new Set(row.flags)];
+  row.fixed=[...new Set(row.fixed)];
+  row.flags=[...new Set(row.flags)].filter(i=>!row.fixed.includes(i));
   row.ok=row.flags.length===0;
   return row;
 }
@@ -867,9 +942,7 @@ function renderPane(p){
       ${fx?`<span style="color:#0B5394">${fx} cell(s) auto-repaired.</span>`:''} Edit any cell below before exporting.</div>`;
   }
 
-  const head=`<tr><th></th><th>Product</th>`+
-    NUMNAMES.slice(0,9).map(h=>`<th>${h}</th>`).join('')+
-    `<th>Type</th><th>Gain/Loss</th><th>Percent Thruput</th></tr>`;
+  const head=`<tr><th></th>`+COLS.map(h=>`<th>${h}</th>`).join('')+`</tr>`;
 
   const body=p.rows.map((r,ri)=>rowHtml(r,ri,false)).join('')+
              (p.total?rowHtml(p.total,-1,true):'');
@@ -900,20 +973,27 @@ function rowHtml(r,ri,isTotal){
       r.fixed.includes(ci)?'fixed':'' ].filter(Boolean).join(' ');
     return `<td class="${cls}" contenteditable data-r="${ri}" data-c="${ci}">${val===null?'':fmt(val,ci)}</td>`;
   };
-  const nums9=r.nums.slice(0,9).map((v,i)=>cell(i,v)).join('');
+  const nums8=r.nums.slice(0,8).map((v,i)=>cell(i,v)).join('');
+  /* Gauge Total and Type are one column on the report, so they are one cell here too */
+  const gCls=['num',r.flags.includes(I_GAUGE)?'flag':'',r.fixed.includes(I_GAUGE)?'fixed':'']
+             .filter(Boolean).join(' ');
+  const gauge=`<td class="${gCls}" contenteditable data-r="${ri}" data-c="gauge">${esc(gaugeText(r))}</td>`;
   return `<tr class="${isTotal?'total':''} ${!isTotal&&!r.ok?'rowbad':''}">
     <td class="rn">${isTotal?'':ri+1}</td>
     <td class="t prod" contenteditable data-r="${ri}" data-c="product">${esc(productOf(r))}</td>
-    ${nums9}
-    <td class="t" contenteditable data-r="${ri}" data-c="type" style="text-align:center">${esc(r.type||'')}</td>
+    ${nums8}${gauge}
     ${cell(I_GL,r.nums[I_GL])}${cell(I_PCT,r.nums[I_PCT])}</tr>`;
 }
 
+/* Printed exactly as the report prints it: no thousands separators, so a value
+   can be compared against the original page character for character. */
 function fmt(v,ci){
   if(v===null||v===undefined||v==='') return '';
   if(ci===I_PCT) return Number(v).toFixed(2);
-  return Number.isInteger(v)?v.toLocaleString('en-US'):Number(v).toFixed(2);
+  return Number.isInteger(v)?String(v):Number(v).toFixed(2);
 }
+const gaugeText = r => (r.nums[I_GAUGE]===null?'':fmt(r.nums[I_GAUGE],I_GAUGE))
+                     + (r.type?' '+r.type:'');
 
 function commit(page,td){
   const ri=+td.dataset.r, c=td.dataset.c;
@@ -921,9 +1001,17 @@ function commit(page,td){
   if(!row) return;
   const txt=td.textContent.trim();
   if(c==='product'){ setProduct(row,txt); return; }
-  if(c==='type'){ row.type=txt.toUpperCase(); return; }
+  if(c==='gauge'){
+    const m=txt.match(/^\s*(-?[\d.,]+)?\s*([A-Za-z]{1,3})?\s*$/);
+    if(m){ row.nums[I_GAUGE]=m[1]?toNum(m[1]):null; row.type=(m[2]||'').toUpperCase(); }
+    else { row.nums[I_GAUGE]=toNum(txt); }
+    row.salvaged=(row.salvaged||[]).filter(i=>i!==I_GAUGE);
+    row.fixed=row.fixed.filter(i=>i!==I_GAUGE);
+    validateRow(row,false); page.audit=columnAudit(page); renderResults(); return;
+  }
   const ci=+c;
   row.nums[ci]=txt===''?null:toNum(txt);
+  row.salvaged=(row.salvaged||[]).filter(i=>i!==ci);
   row.fixed=row.fixed.filter(i=>i!==ci);
   validateRow(row,false);
   page.audit=columnAudit(page);
@@ -934,16 +1022,20 @@ function commit(page,td){
    Export  (ExcelJS: needed for fonts/fills, which the verbatim
    monospace header block and the Shell styling both depend on)
    ============================================================ */
-const RED='FFDD1D21', RED_DK='FFA81317', YEL='FFFBCE07', INK='FF333333',
-      GREY='FFF7F7F7', LINE='FFDDDCDB', FLAG_BG='FFFFF1F1', FIX_BG='FFEFF7FF',
+const RED_DK='FFA81317', INK='FF333333', LINE='FFDDDCDB',
+      FLAG_BG='FFFFF1F1', FIX_BG='FFEFF7FF',
       MONO='Consolas', SANS='Calibri';
 
 /* widths line up with COLS */
-const WIDTHS=[30,14,12,14,17,13,14,12,14,14,7,12,15];
+const WIDTHS=[30,14,12,15,18,13,14,12,14,17,12,16];
 const EXTRA_WIDTHS=[26,15,10,7];                       // Source File, Terminal, Month, Page
 
 function rowArray(r){
-  return [ productOf(r), ...r.nums.slice(0,9), r.type||'', r.nums[I_GL], r.nums[I_PCT] ];
+  /* Gauge Total and Type share a column, as they do on the report. The cell stays
+     a real number whenever there is no Type code to carry. */
+  const g = r.nums[I_GAUGE];
+  const gauge = r.type ? ((g===null?'':g)+' '+r.type).trim() : g;
+  return [ productOf(r), ...r.nums.slice(0,8), gauge, r.nums[I_GL], r.nums[I_PCT] ];
 }
 const thin=c=>({style:'thin',color:{argb:c||LINE}});
 
@@ -974,8 +1066,7 @@ function writeHeaderBlock(ws,p,width){
   c.font={name:MONO,size:9,color:{argb:INK}};
   c.alignment={vertical:'top',horizontal:'left',wrapText:true,indent:0};
   c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFFFFFFF'}};
-  const med={style:'medium',color:{argb:RED}};
-  c.border={top:med,left:med,bottom:med,right:med};
+  c.border={bottom:thin('FF808080')};
   for(let r=1;r<=n;r++) ws.getRow(r).height=13.5;
   return n;
 }
@@ -991,27 +1082,27 @@ function writeMetaStrip(ws,p,row,width){
   ws.mergeCells(row,1,row,width);
   const c=ws.getCell(row,1);
   c.value=bits.join('     ·     ');
-  c.font={name:SANS,size:9,color:{argb:'FF6B5B00'}};
-  c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFFFFDF2'}};
-  c.alignment={vertical:'middle',horizontal:'left',indent:1};
-  c.border={bottom:thin('FFF0DDB4')};
+  c.font={name:SANS,size:8,italic:true,color:{argb:'FF767676'}};
+  c.alignment={vertical:'middle',horizontal:'left'};
   ws.getRow(row).height=16;
 }
 
+/* Deliberately unstyled apart from the rule underneath, so the sheet reads like
+   the printed report rather than like a dashboard: no fills, no autofilter. */
 function styleHeaderRow(ws,row,width){
   const r=ws.getRow(row);
-  r.height=30;
+  r.height=28;
   for(let c=1;c<=width;c++){
     const cell=r.getCell(c);
-    cell.font={name:SANS,size:9,bold:true,color:{argb:'FFFFFFFF'}};
-    cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:RED}};
-    cell.alignment={vertical:'middle',horizontal:c===1?'left':'right',wrapText:true};
-    cell.border={top:thin(RED),left:thin(RED_DK),bottom:thin(RED_DK),right:thin(RED_DK)};
+    cell.font={name:MONO,size:9,color:{argb:INK}};
+    cell.alignment={vertical:'bottom',horizontal:c===1?'left':'right',wrapText:true};
+    cell.border={bottom:thin('FF808080')};
   }
 }
 
-/* numeric columns, counted from the left edge of the data block */
-const numFmtFor=(i)=> i===12 ? '0.00' : '#,##0';
+/* Percent Thruput carries two decimals, everything else is a plain integer -
+   no thousands separators, so figures match the printout character for character. */
+const numFmtFor=(dc)=> dc===COLS.length ? '0.00' : '0';
 
 function styleDataRow(ws,row,offset,src,isTotal){
   const r=ws.getRow(row);
@@ -1020,28 +1111,28 @@ function styleDataRow(ws,row,offset,src,isTotal){
   for(let c=1;c<=width;c++){
     const cell=r.getCell(c);
     const dc=c-offset;                                  // 1-based index into COLS
-    const isNumCol=dc>=2 && dc<=13 && dc!==11;
-    cell.font={name:isNumCol?MONO:SANS,size:9,bold:!!isTotal,
-               color:{argb:isTotal?'FF3D3000':INK}};
-    cell.alignment={horizontal:dc===1||dc<1?'left':(dc===11?'center':'right')};
-    if(isNumCol && typeof cell.value==='number') cell.numFmt=numFmtFor(dc-1);
-    cell.border={bottom:thin(),right:thin('FFF0F0F0')};
+    cell.font={name:MONO,size:9,color:{argb:INK}};
+    cell.alignment={horizontal:dc<=1?'left':'right'};
+    if(typeof cell.value==='number') cell.numFmt=numFmtFor(dc);
     if(isTotal){
-      cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:YEL}};
-      cell.border={top:{style:'medium',color:{argb:RED}},bottom:thin(),right:thin('FFEBC207')};
+      /* the report rules a line above its Total and prints it plain */
+      cell.border={top:thin('FF808080')};
     } else if(src){
-      /* COLS 2..10 are nums 0..8; COLS 11 is Type; COLS 12/13 are Gain/Loss and Percent */
+      /* COLS 2..10 are nums 0..8 (10 being the merged Gauge Total Type),
+         COLS 11 is Gain/Loss and COLS 12 is Percent Thruput */
       let idx=-1;
       if(dc>=2 && dc<=10) idx=dc-2;
-      else if(dc===12) idx=I_GL;
-      else if(dc===13) idx=I_PCT;
+      else if(dc===11) idx=I_GL;
+      else if(dc===12) idx=I_PCT;
       if(idx>=0){
+        /* the only tinting left: a cell that failed a check, or one the
+           arithmetic filled in. Both are findings, not decoration. */
         if(src.flags && src.flags.includes(idx)){
           cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:FLAG_BG}};
           cell.font={name:MONO,size:9,bold:true,color:{argb:RED_DK}};
         } else if(src.fixed && src.fixed.includes(idx)){
           cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:FIX_BG}};
-          cell.font={name:MONO,size:9,bold:true,color:{argb:'FF0B5394'}};
+          cell.font={name:MONO,size:9,color:{argb:'FF0B5394'}};
         }
       }
     }
@@ -1065,7 +1156,6 @@ function buildPageSheet(wb,p,used){
   if(p.total){ row++; putRow(ws,row,rowArray(p.total)); styleDataRow(ws,row,0,p.total,true); }
 
   ws.views=[{state:'frozen',xSplit:1,ySplit:headRow}];
-  if(p.rows.length) ws.autoFilter={from:{row:headRow,column:1},to:{row:headRow+p.rows.length,column:width}};
   return ws;
 }
 
@@ -1083,7 +1173,6 @@ function buildCombinedSheet(wb,used){
     styleDataRow(ws,row,4,r,false);
   }));
   ws.views=[{state:'frozen',ySplit:1}];
-  if(row>1) ws.autoFilter={from:{row:1,column:1},to:{row:row,column:cols.length}};
   return ws;
 }
 
@@ -1112,9 +1201,9 @@ function buildValidationSheet(wb,used){
   ws.mergeCells(1,1,1,4);
   const t=ws.getCell(1,1);
   t.value='Validation report  ·  generated '+new Date().toLocaleString()+'  ·  open issues: '+issues;
-  t.font={name:SANS,size:11,bold:true,color:{argb:'FFFFFFFF'}};
-  t.fill={type:'pattern',pattern:'solid',fgColor:{argb:issues?RED:'FF1E7B34'}};
-  t.alignment={vertical:'middle',horizontal:'left',indent:1};
+  t.font={name:SANS,size:11,bold:true,color:{argb:issues?RED_DK:INK}};
+  t.alignment={vertical:'middle',horizontal:'left'};
+  t.border={bottom:thin('FF808080')};
   ws.getRow(1).height=22;
 
   putRow(ws,3,['Page','Product','Check','Detail']);
