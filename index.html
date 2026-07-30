@@ -9,6 +9,7 @@
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.0/dist/tesseract.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 
 <style>
 :root{
@@ -128,6 +129,7 @@ thead th:nth-child(1),thead th:nth-child(2),thead th:nth-child(3){text-align:lef
 tbody td{padding:5px 8px;border-bottom:1px solid #EFEFEF;border-right:1px solid #F5F5F5;
   text-align:right;font-family:var(--mono);white-space:nowrap}
 tbody td.t{text-align:left;font-family:inherit}
+tbody td.prod{font-family:var(--mono);min-width:210px}
 tbody td.rn{text-align:center;color:#B0B0B0;font-size:10.5px;width:34px}
 tbody tr:nth-child(even){background:#FCFCFC}
 tbody tr:hover{background:#FFFBEA}
@@ -214,7 +216,7 @@ footer b{color:var(--shell-red)}
         <label class="opt">
           <input type="checkbox" id="optSharpen" checked>
           <span><span class="h">Sharpen images before reading</span>
-          <span class="d">Upscales and thresholds screenshots. Improves accuracy on small or compressed images.</span></span>
+          <span class="d">Upscales screenshots to a whole-number multiple and stretches contrast before reading. On a real Sewaren page this took accuracy from 73% to 100% — leave it on.</span></span>
         </label>
       </div>
       <div class="btn-row" style="margin-top:18px">
@@ -239,7 +241,7 @@ footer b{color:var(--shell-red)}
       <span><i style="background:#FFF1F1;box-shadow:inset 0 0 0 1px #F3B9BA"></i>Failed a check — please verify</span>
       <span><i style="background:#EFF7FF"></i>Auto-repaired from the row's arithmetic</span>
       <span><i style="background:var(--shell-yellow)"></i>Report total line</span>
-      <span>Every cell is editable — click and type, then export.</span>
+      <span>Every cell is editable — click and type, then export. Flags carry through to the workbook.</span>
     </div>
   </section>
 
@@ -265,9 +267,17 @@ footer b{color:var(--shell-red)}
 /* ============================================================
    Parser — tuned to the Toptech TMS7 MTD STOCK REPORT layout
    ============================================================ */
-const COLS = ['Product Code','Product Name','Open Balance','Receipts','Disposals Bulk',
+const COLS = ['Product','Open Balance','Receipts','Disposals Bulk',
   'Disposals Non-Bulk','Company Use','Other','Stock Adj','Close Book','Gauge Total','Type',
   'Gain/Loss','Percent Thruput'];
+/* Code and name are kept apart internally (the code drives validation and matching)
+   but the report prints them as one column, so that is how they are exported. */
+const productOf = r => [r.code,r.name].filter(Boolean).join(' ').trim();
+function setProduct(r,txt){
+  const m=String(txt).trim().match(/^([\dOoIl|]{5,7})\s+(.*)$/);
+  if(m){ r.code=m[1].replace(/[OoQD]/g,'0').replace(/[Il|]/g,'1'); r.name=m[2].trim(); }
+  else { r.code=''; r.name=String(txt).trim(); }
+}
 const NUMCOLS = 11;                       // numeric columns per row (Type is text and often blank)
 const NUMNAMES = ['Open Balance','Receipts','Disposals Bulk','Disposals Non-Bulk','Company Use',
   'Other','Stock Adj','Close Book','Gauge Total','Gain/Loss','Percent Thruput'];
@@ -384,9 +394,17 @@ function parseReport(rawLines){
   const meta={}; const unparsed=[];
   const lines=rawLines.map(l=>String(l==null?'':l).replace(/\t/g,'  ').replace(/\s+$/,''));
   const dataRaw=[]; let totalTk=null;
+  const head=[]; let headDone=false;
 
   for(const line of lines){
     const t=line.trim();
+    /* everything above the column headings is the report's own header block,
+       kept byte-for-byte so it can be reproduced verbatim in the workbook */
+    if(!headDone){
+      if(/^Product\b/i.test(t) && /Open|Balance|Receipt/i.test(t)) headDone=true;
+      else if(/^[\dOoIl|]{5,7}\s+\S/.test(t)) headDone=true;
+      else head.push(line);
+    }
     if(!t || /^[-=_.\s|]+$/.test(t)) continue;
     let m;
 
@@ -451,7 +469,8 @@ function parseReport(rawLines){
     if(best.nums.filter(v=>v!==null).length>=3)
       total=Object.assign(best,{code:'',name:'Total',isTotal:true,flags:[],fixed:[]});
   }
-  return {meta,rows,total,unparsed,anchors:at,mode};
+  while(head.length && !head[head.length-1].trim()) head.pop();
+  return {meta,rows,total,unparsed,anchors:at,mode,head};
 }
 /* Rows are read right-anchored, so a column the reader dropped is missing from the LEFT. */
 function padTo(a,n){ const o=a.slice(0,n); while(o.length<n) o.unshift(null); return o; }
@@ -800,7 +819,7 @@ $('go').onclick=async()=>{
         state.pages.push({
           label:r.label, source:f.file.name, lines:r.lines,
           meta:parsed.meta, rows:parsed.rows, total:parsed.total,
-          unparsed:parsed.unparsed, mode:parsed.mode, audit:null
+          unparsed:parsed.unparsed, mode:parsed.mode, head:parsed.head, audit:null
         });
       }
       f.status='done';
@@ -848,7 +867,7 @@ function renderPane(p){
       ${fx?`<span style="color:#0B5394">${fx} cell(s) auto-repaired.</span>`:''} Edit any cell below before exporting.</div>`;
   }
 
-  const head=`<tr><th></th><th>Product Code</th><th>Product Name</th>`+
+  const head=`<tr><th></th><th>Product</th>`+
     NUMNAMES.slice(0,9).map(h=>`<th>${h}</th>`).join('')+
     `<th>Type</th><th>Gain/Loss</th><th>Percent Thruput</th></tr>`;
 
@@ -884,8 +903,7 @@ function rowHtml(r,ri,isTotal){
   const nums9=r.nums.slice(0,9).map((v,i)=>cell(i,v)).join('');
   return `<tr class="${isTotal?'total':''} ${!isTotal&&!r.ok?'rowbad':''}">
     <td class="rn">${isTotal?'':ri+1}</td>
-    <td class="t" contenteditable data-r="${ri}" data-c="code">${esc(r.code||'')}</td>
-    <td class="t" contenteditable data-r="${ri}" data-c="name">${esc(r.name||'')}</td>
+    <td class="t prod" contenteditable data-r="${ri}" data-c="product">${esc(productOf(r))}</td>
     ${nums9}
     <td class="t" contenteditable data-r="${ri}" data-c="type" style="text-align:center">${esc(r.type||'')}</td>
     ${cell(I_GL,r.nums[I_GL])}${cell(I_PCT,r.nums[I_PCT])}</tr>`;
@@ -902,7 +920,8 @@ function commit(page,td){
   const row=ri<0?page.total:page.rows[ri];
   if(!row) return;
   const txt=td.textContent.trim();
-  if(c==='code'||c==='name'||c==='type'){ row[c]=txt; return; }
+  if(c==='product'){ setProduct(row,txt); return; }
+  if(c==='type'){ row.type=txt.toUpperCase(); return; }
   const ci=+c;
   row.nums[ci]=txt===''?null:toNum(txt);
   row.fixed=row.fixed.filter(i=>i!==ci);
@@ -912,92 +931,218 @@ function commit(page,td){
 }
 
 /* ============================================================
-   Export
+   Export  (ExcelJS: needed for fonts/fills, which the verbatim
+   monospace header block and the Shell styling both depend on)
    ============================================================ */
-const SHEET_COLS=[{wch:14},{wch:26},{wch:14},{wch:12},{wch:14},{wch:17},{wch:13},{wch:14},
-                  {wch:12},{wch:14},{wch:14},{wch:7},{wch:12},{wch:15}];
+const RED='FFDD1D21', RED_DK='FFA81317', YEL='FFFBCE07', INK='FF333333',
+      GREY='FFF7F7F7', LINE='FFDDDCDB', FLAG_BG='FFFFF1F1', FIX_BG='FFEFF7FF',
+      MONO='Consolas', SANS='Calibri';
+
+/* widths line up with COLS */
+const WIDTHS=[30,14,12,14,17,13,14,12,14,14,7,12,15];
+const EXTRA_WIDTHS=[26,15,10,7];                       // Source File, Terminal, Month, Page
 
 function rowArray(r){
-  return [ r.code||'', r.name||'', ...r.nums.slice(0,9), r.type||'', r.nums[I_GL], r.nums[I_PCT] ];
+  return [ productOf(r), ...r.nums.slice(0,9), r.type||'', r.nums[I_GL], r.nums[I_PCT] ];
 }
+const thin=c=>({style:'thin',color:{argb:c||LINE}});
 
-function pageAoa(p,withMeta){
-  const a=[]; const m=p.meta;
-  if(withMeta){
-    a.push([ (m.report||'MTD STOCK REPORT') + (m.terminal?'  —  '+m.terminal:'') ]);
-    a.push(['Month',m.month||'','Units',m.units||'','Run',[m.date,m.time].filter(Boolean).join(' ')]);
-    a.push(['Activity for',m.activity||'','Supplier',m.supplier||'','Page',m.page||'']);
-    a.push(['Source file',p.source||'']);
-    a.push([]);
+/* Write a row cell by cell. Deliberately not row.values = [...] : that path
+   depends on an instanceof Array check that silently drops everything if the
+   array was created in a different JS realm. */
+function putRow(ws,row,arr){
+  for(let i=0;i<arr.length;i++){
+    const v=arr[i];
+    ws.getCell(row,i+1).value = (v===undefined?null:v);
   }
-  a.push(COLS);
-  p.rows.forEach(r=>a.push(rowArray(r)));
-  if(p.total){ a.push([]); a.push(rowArray(p.total)); }
-  return a;
+  return ws.getRow(row);
 }
 
 function safeName(s,used){
-  let n=String(s).replace(/[\\\/\?\*\[\]:]/g,'-').slice(0,28)||'Sheet';
+  let n=String(s).replace(/[\\\/\?\*\[\]:]/g,'-').slice(0,28).trim()||'Sheet';
   let base=n,k=2; while(used.has(n)){ n=(base.slice(0,25)+'_'+k++); } used.add(n); return n;
 }
 
-/* Thousands separators on the money columns, 2dp on Percent Thruput. */
-function formatNumbers(ws,offset){
-  const ref=ws['!ref']; if(!ref) return;
-  const R=XLSX.utils.decode_range(ref);
-  for(let r=R.s.r;r<=R.e.r;r++){
-    for(let c=R.s.c;c<=R.e.c;c++){
-      const cell=ws[XLSX.utils.encode_cell({r,c})];
-      if(!cell||cell.t!=='n') continue;
-      const dataCol=c-offset;
-      cell.z = (dataCol===13) ? '0.00' : '#,##0';
+/* The report header, reproduced exactly as printed, in one merged monospace cell. */
+function writeHeaderBlock(ws,p,width){
+  const lines=(p.head&&p.head.length)?p.head.slice():[
+    (p.meta.report||'MTD STOCK REPORT')+(p.meta.terminal?'   '+p.meta.terminal:'')];
+  const n=Math.max(lines.length,1);
+  ws.mergeCells(1,1,n,width);
+  const c=ws.getCell(1,1);
+  c.value=lines.join('\n');
+  c.font={name:MONO,size:9,color:{argb:INK}};
+  c.alignment={vertical:'top',horizontal:'left',wrapText:true,indent:0};
+  c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFFFFFFF'}};
+  const med={style:'medium',color:{argb:RED}};
+  c.border={top:med,left:med,bottom:med,right:med};
+  for(let r=1;r<=n;r++) ws.getRow(r).height=13.5;
+  return n;
+}
+
+/* One merged strip of the fields parsed out of that header. Kept as a single
+   cell so nothing can clip or collide with a neighbouring column. */
+function writeMetaStrip(ws,p,row,width){
+  const m=p.meta;
+  const bits=[['Terminal',m.terminal],['Month',m.month],['Units',m.units],
+              ['Page',m.page],['Supplier',m.supplier],['Source',p.source],
+              ['Mapping',p.mode]]
+             .filter(x=>x[1]).map(([k,v])=>k+': '+v);
+  ws.mergeCells(row,1,row,width);
+  const c=ws.getCell(row,1);
+  c.value=bits.join('     ·     ');
+  c.font={name:SANS,size:9,color:{argb:'FF6B5B00'}};
+  c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFFFFDF2'}};
+  c.alignment={vertical:'middle',horizontal:'left',indent:1};
+  c.border={bottom:thin('FFF0DDB4')};
+  ws.getRow(row).height=16;
+}
+
+function styleHeaderRow(ws,row,width){
+  const r=ws.getRow(row);
+  r.height=30;
+  for(let c=1;c<=width;c++){
+    const cell=r.getCell(c);
+    cell.font={name:SANS,size:9,bold:true,color:{argb:'FFFFFFFF'}};
+    cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:RED}};
+    cell.alignment={vertical:'middle',horizontal:c===1?'left':'right',wrapText:true};
+    cell.border={top:thin(RED),left:thin(RED_DK),bottom:thin(RED_DK),right:thin(RED_DK)};
+  }
+}
+
+/* numeric columns, counted from the left edge of the data block */
+const numFmtFor=(i)=> i===12 ? '0.00' : '#,##0';
+
+function styleDataRow(ws,row,offset,src,isTotal){
+  const r=ws.getRow(row);
+  r.height=14;
+  const width=offset+COLS.length;
+  for(let c=1;c<=width;c++){
+    const cell=r.getCell(c);
+    const dc=c-offset;                                  // 1-based index into COLS
+    const isNumCol=dc>=2 && dc<=13 && dc!==11;
+    cell.font={name:isNumCol?MONO:SANS,size:9,bold:!!isTotal,
+               color:{argb:isTotal?'FF3D3000':INK}};
+    cell.alignment={horizontal:dc===1||dc<1?'left':(dc===11?'center':'right')};
+    if(isNumCol && typeof cell.value==='number') cell.numFmt=numFmtFor(dc-1);
+    cell.border={bottom:thin(),right:thin('FFF0F0F0')};
+    if(isTotal){
+      cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:YEL}};
+      cell.border={top:{style:'medium',color:{argb:RED}},bottom:thin(),right:thin('FFEBC207')};
+    } else if(src){
+      /* COLS 2..10 are nums 0..8; COLS 11 is Type; COLS 12/13 are Gain/Loss and Percent */
+      let idx=-1;
+      if(dc>=2 && dc<=10) idx=dc-2;
+      else if(dc===12) idx=I_GL;
+      else if(dc===13) idx=I_PCT;
+      if(idx>=0){
+        if(src.flags && src.flags.includes(idx)){
+          cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:FLAG_BG}};
+          cell.font={name:MONO,size:9,bold:true,color:{argb:RED_DK}};
+        } else if(src.fixed && src.fixed.includes(idx)){
+          cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:FIX_BG}};
+          cell.font={name:MONO,size:9,bold:true,color:{argb:'FF0B5394'}};
+        }
+      }
     }
   }
 }
 
-function buildWorkbook(){
-  const wb=XLSX.utils.book_new(), used=new Set();
+function buildPageSheet(wb,p,used){
+  const ws=wb.addWorksheet(safeName(p.label,used),
+    {properties:{defaultRowHeight:14},pageSetup:{orientation:'landscape',fitToPage:true,fitToWidth:1,fitToHeight:0}});
+  const width=COLS.length;
+  ws.columns=WIDTHS.map(w=>({width:w}));
+
+  const hEnd=writeHeaderBlock(ws,p,width);
+  writeMetaStrip(ws,p,hEnd+1,width);
+  const headRow=hEnd+3;
+  putRow(ws,headRow,COLS);
+  styleHeaderRow(ws,headRow,width);
+
+  let row=headRow;
+  p.rows.forEach(r=>{ row++; putRow(ws,row,rowArray(r)); styleDataRow(ws,row,0,r,false); });
+  if(p.total){ row++; putRow(ws,row,rowArray(p.total)); styleDataRow(ws,row,0,p.total,true); }
+
+  ws.views=[{state:'frozen',xSplit:1,ySplit:headRow}];
+  if(p.rows.length) ws.autoFilter={from:{row:headRow,column:1},to:{row:headRow+p.rows.length,column:width}};
+  return ws;
+}
+
+function buildCombinedSheet(wb,used){
+  const cols=['Source File','Terminal','Month','Page',...COLS];
+  const ws=wb.addWorksheet(safeName('Combined',used),
+    {pageSetup:{orientation:'landscape',fitToPage:true,fitToWidth:1,fitToHeight:0}});
+  ws.columns=[...EXTRA_WIDTHS,...WIDTHS].map(w=>({width:w}));
+  putRow(ws,1,cols);
+  styleHeaderRow(ws,1,cols.length);
+  let row=1;
+  state.pages.forEach(p=>p.rows.forEach(r=>{
+    row++;
+    putRow(ws,row,[p.source||p.label,p.meta.terminal||'',p.meta.month||'',p.meta.page||'',...rowArray(r)]);
+    styleDataRow(ws,row,4,r,false);
+  }));
+  ws.views=[{state:'frozen',ySplit:1}];
+  if(row>1) ws.autoFilter={from:{row:1,column:1},to:{row:row,column:cols.length}};
+  return ws;
+}
+
+function buildValidationSheet(wb,used){
+  const ws=wb.addWorksheet(safeName('Validation',used));
+  ws.columns=[{width:26},{width:30},{width:18},{width:78}];
+  const rows=[]; let issues=0;
   state.pages.forEach(p=>{
-    const ws=XLSX.utils.aoa_to_sheet(pageAoa(p,true));
-    ws['!cols']=SHEET_COLS;
-    formatNumbers(ws,0);
-    XLSX.utils.book_append_sheet(wb,ws,safeName(p.label,used));
-  });
-
-  if($('optCombined').checked && state.pages.length){
-    const a=[['Source File','Terminal','Month','Page',...COLS]];
-    state.pages.forEach(p=>p.rows.forEach(r=>a.push(
-      [p.source||p.label,p.meta.terminal||'',p.meta.month||'',p.meta.page||'',...rowArray(r)])));
-    const ws=XLSX.utils.aoa_to_sheet(a);
-    ws['!cols']=[{wch:26},{wch:15},{wch:10},{wch:7},...SHEET_COLS];
-    ws['!autofilter']={ref:XLSX.utils.encode_range({s:{r:0,c:0},e:{r:a.length-1,c:17}})};
-    formatNumbers(ws,4);
-    XLSX.utils.book_append_sheet(wb,ws,safeName('Combined',used));
-  }
-
-  if($('optValidate').checked){
-    const a=[['Validation report','generated '+new Date().toLocaleString()],[],
-             ['Page','Product Code','Product Name','Check','Detail']];
-    let issues=0;
-    state.pages.forEach(p=>{
-      p.rows.forEach(r=>{
-        if(r.ok && !r.fixed.length) return;
-        const n=r.nums, s=MOVE.reduce((x,i)=>x+(n[i]||0),0);
-        if(!r.ok){ issues++; a.push([p.label,r.code,r.name,'Row balance',
-          'Movements sum to '+s+' but Close Book reads '+n[I_BOOK]]); }
-        if(r.fixed.length) a.push([p.label,r.code,r.name,'Auto-repaired',
-          r.fixed.map(i=>NUMNAMES[i]).join(', ')]);
-      });
-      (p.audit||[]).forEach(x=>{ issues++;
-        a.push([p.label,'','','Column total',x.col+': rows sum '+x.rows+' vs report total '+x.total+' (diff '+x.diff+')']); });
-      if(p.unparsed.length) a.push([p.label,'','','Unmatched line',p.unparsed.length+' line(s) not recognised as data']);
+    p.rows.forEach(r=>{
+      if(r.ok && !r.fixed.length) return;
+      const n=r.nums, s=MOVE.reduce((x,i)=>x+(n[i]||0),0);
+      if(!r.ok){ issues++; rows.push([p.label,productOf(r),'Row balance',
+        'Movements sum to '+s+' but Close Book reads '+n[I_BOOK]]); }
+      if(r.fixed.length) rows.push([p.label,productOf(r),'Auto-repaired',
+        r.fixed.map(i=>NUMNAMES[i]).join(', ')]);
     });
-    if(a.length===3) a.push(['','','','All checks passed','Every row balances and all column totals reconcile against the report Total line']);
-    a.splice(1,0,['Open issues',issues]);
-    const ws=XLSX.utils.aoa_to_sheet(a);
-    ws['!cols']=[{wch:24},{wch:14},{wch:26},{wch:16},{wch:70}];
-    XLSX.utils.book_append_sheet(wb,ws,safeName('Validation',used));
-  }
+    (p.audit||[]).forEach(x=>{ issues++;
+      rows.push([p.label,'','Column total',
+        x.col+': rows sum '+x.rows+' vs report total '+x.total+' (diff '+x.diff+')']); });
+    if(p.unparsed.length) rows.push([p.label,'','Unmatched line',
+      p.unparsed.length+' line(s) not recognised as report data']);
+  });
+  if(!rows.length) rows.push(['','','All checks passed',
+    'Every row balances and all column totals reconcile against the report Total line']);
+
+  ws.mergeCells(1,1,1,4);
+  const t=ws.getCell(1,1);
+  t.value='Validation report  ·  generated '+new Date().toLocaleString()+'  ·  open issues: '+issues;
+  t.font={name:SANS,size:11,bold:true,color:{argb:'FFFFFFFF'}};
+  t.fill={type:'pattern',pattern:'solid',fgColor:{argb:issues?RED:'FF1E7B34'}};
+  t.alignment={vertical:'middle',horizontal:'left',indent:1};
+  ws.getRow(1).height=22;
+
+  putRow(ws,3,['Page','Product','Check','Detail']);
+  styleHeaderRow(ws,3,4);
+  rows.forEach((r,i)=>{
+    const row=4+i; putRow(ws,row,r); ws.getRow(row).height=14;
+    for(let c=1;c<=4;c++){
+      const cell=ws.getCell(row,c);
+      cell.font={name:c===2?MONO:SANS,size:9,color:{argb:INK}};
+      cell.alignment={horizontal:'left',wrapText:c===4};
+      cell.border={bottom:thin()};
+      if(c===3 && /balance|Column total|Unmatched/i.test(String(r[2])))
+        cell.font={name:SANS,size:9,bold:true,color:{argb:RED_DK}};
+      if(c===3 && /repaired/i.test(String(r[2])))
+        cell.font={name:SANS,size:9,bold:true,color:{argb:'FF0B5394'}};
+    }
+  });
+  ws.views=[{state:'frozen',ySplit:3}];
+  return ws;
+}
+
+async function buildWorkbook(){
+  const wb=new ExcelJS.Workbook();
+  wb.creator='MTD Stock Report Converter'; wb.created=new Date();
+  const used=new Set();
+  state.pages.forEach(p=>buildPageSheet(wb,p,used));
+  if($('optCombined').checked && state.pages.length) buildCombinedSheet(wb,used);
+  if($('optValidate').checked) buildValidationSheet(wb,used);
   return wb;
 }
 
@@ -1007,10 +1152,26 @@ function baseFileName(){
   return bits.join('_').replace(/\s+/g,'')+'_'+new Date().toISOString().slice(0,10);
 }
 
-$('dlxlsx').onclick=()=>{
+function saveBlob(blob,name){
+  const url=URL.createObjectURL(blob);
+  const el=document.createElement('a'); el.href=url; el.download=name;
+  document.body.appendChild(el); el.click(); el.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),4000);
+}
+
+$('dlxlsx').onclick=async()=>{
   if(!state.pages.length) return;
-  XLSX.writeFile(buildWorkbook(),baseFileName()+'.xlsx',{compression:true});
+  const btn=$('dlxlsx'), label=btn.textContent;
+  btn.disabled=true; btn.textContent='Building…';
+  try{
+    const wb=await buildWorkbook();
+    const buf=await wb.xlsx.writeBuffer();
+    saveBlob(new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),
+             baseFileName()+'.xlsx');
+  }catch(e){ console.error(e); alert('Could not build the workbook: '+(e.message||e)); }
+  btn.disabled=false; btn.textContent=label;
 };
+
 $('dlcsv').onclick=()=>{
   if(!state.pages.length) return;
   const a=[['Source File','Terminal','Month','Page',...COLS]];
@@ -1018,10 +1179,11 @@ $('dlcsv').onclick=()=>{
     p.rows.forEach(r=>a.push([p.source||p.label,p.meta.terminal||'',p.meta.month||'',p.meta.page||'',...rowArray(r)]));
     if(p.total) a.push([p.source||p.label,p.meta.terminal||'',p.meta.month||'',p.meta.page||'',...rowArray(p.total)]);
   });
-  const csv=XLSX.utils.sheet_to_csv(XLSX.utils.aoa_to_sheet(a));
-  const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
-  const el=document.createElement('a'); el.href=url; el.download=baseFileName()+'.csv';
-  document.body.appendChild(el); el.click(); el.remove(); URL.revokeObjectURL(url);
+  const csv=a.map(r=>r.map(v=>{
+    const s=v==null?'':String(v);
+    return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;
+  }).join(',')).join('\r\n');
+  saveBlob(new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8'}),baseFileName()+'.csv');
 };
 
 window.addEventListener('beforeunload',()=>{ if(ocrWorker) try{ocrWorker.terminate()}catch(e){} });
