@@ -1,0 +1,926 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MTD Stock Report → Excel Converter</title>
+<link rel="icon" href="companylogo.ico">
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.0/dist/tesseract.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+
+<style>
+:root{
+  --shell-red:#DD1D21;
+  --shell-red-dark:#A81317;
+  --shell-yellow:#FBCE07;
+  --shell-yellow-dark:#E0B500;
+  --ink:#333333;
+  --ink-soft:#5A5A5A;
+  --line:#DDDCDB;
+  --paper:#FFFFFF;
+  --bg:#F7F7F7;
+  --ok:#1E7B34;
+  --warn:#B45309;
+  --mono:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  font-family:"Segoe UI",Arial,Helvetica,sans-serif;
+  background:var(--bg);color:var(--ink);font-size:14px;line-height:1.5;
+}
+
+/* ---------- Header ---------- */
+header{background:var(--shell-yellow);border-bottom:5px solid var(--shell-red);}
+.head-inner{max-width:1280px;margin:0 auto;padding:16px 24px;display:flex;align-items:center;gap:18px}
+.logo{width:58px;height:58px;flex:0 0 58px;display:block}
+.logo img{width:100%;height:100%;object-fit:contain;display:block}
+h1{margin:0;font-size:21px;font-weight:700;letter-spacing:.2px;color:#1F1F1F}
+.sub{margin:2px 0 0;font-size:12.5px;color:#6B5B00;font-weight:600;text-transform:uppercase;letter-spacing:.9px}
+.pill{margin-left:auto;background:var(--shell-red);color:#fff;font-size:11px;font-weight:700;
+  padding:5px 12px;border-radius:20px;letter-spacing:.6px;text-transform:uppercase;white-space:nowrap}
+
+/* ---------- Layout ---------- */
+main{max-width:1280px;margin:0 auto;padding:22px 24px 60px}
+.card{background:var(--paper);border:1px solid var(--line);border-radius:6px;margin-bottom:18px;overflow:hidden}
+.card-h{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line);background:#FCFCFC}
+.card-h .n{width:22px;height:22px;border-radius:50%;background:var(--shell-red);color:#fff;
+  font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;flex:0 0 22px}
+.card-h h2{margin:0;font-size:14.5px;font-weight:700}
+.card-b{padding:16px}
+
+/* ---------- Dropzone ---------- */
+#drop{border:2px dashed #C9C8C7;border-radius:6px;background:#FDFDFD;padding:32px 20px;text-align:center;
+  cursor:pointer;transition:.15s}
+#drop:hover{border-color:var(--shell-red);background:#FFF9F9}
+#drop.over{border-color:var(--shell-red);background:#FFF1F1;border-style:solid}
+#drop .big{font-size:15.5px;font-weight:700;margin-bottom:5px}
+#drop .small{font-size:12.5px;color:var(--ink-soft)}
+.types{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-top:14px}
+.type{font-family:var(--mono);font-size:10.5px;font-weight:700;padding:3px 8px;border-radius:3px;
+  background:var(--shell-yellow);color:#4A3B00;border:1px solid var(--shell-yellow-dark)}
+
+/* ---------- File list ---------- */
+#files{margin-top:14px;display:none}
+.f{display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--line);
+  border-radius:4px;margin-bottom:7px;background:#FCFCFC;font-size:13px}
+.f .nm{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.f .sz{color:var(--ink-soft);font-size:11.5px;white-space:nowrap}
+.f .st{margin-left:auto;font-size:11px;font-weight:700;padding:2px 9px;border-radius:12px;white-space:nowrap}
+.st.wait{background:#EDEDED;color:#666}
+.st.run{background:var(--shell-yellow);color:#5C4700}
+.st.done{background:#E3F3E7;color:var(--ok)}
+.st.err{background:#FDE7E7;color:var(--shell-red-dark)}
+.f .x{border:0;background:none;color:#999;cursor:pointer;font-size:17px;line-height:1;padding:0 3px}
+.f .x:hover{color:var(--shell-red)}
+
+/* ---------- Options ---------- */
+.opts{display:flex;flex-wrap:wrap;gap:10px 26px}
+.opt{display:flex;align-items:flex-start;gap:8px;font-size:13px;max-width:340px}
+.opt input{margin-top:3px;accent-color:var(--shell-red);width:15px;height:15px}
+.opt .h{font-weight:600}
+.opt .d{font-size:11.5px;color:var(--ink-soft);line-height:1.35}
+
+/* ---------- Buttons ---------- */
+.btn{border:0;border-radius:4px;font-size:13.5px;font-weight:700;padding:11px 22px;cursor:pointer;
+  letter-spacing:.3px;transition:.15s}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn-red{background:var(--shell-red);color:#fff}
+.btn-red:hover:not(:disabled){background:var(--shell-red-dark)}
+.btn-yellow{background:var(--shell-yellow);color:#3D3000}
+.btn-yellow:hover:not(:disabled){background:var(--shell-yellow-dark)}
+.btn-ghost{background:#fff;color:var(--ink);border:1px solid #C9C8C7;font-weight:600}
+.btn-ghost:hover:not(:disabled){border-color:var(--shell-red);color:var(--shell-red)}
+.btn-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+
+/* ---------- Progress ---------- */
+#prog{display:none;margin-top:14px}
+.bar{height:7px;background:#EDEDED;border-radius:4px;overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--shell-yellow),var(--shell-red));
+  transition:width .25s}
+#progtxt{font-size:12px;color:var(--ink-soft);margin-top:6px;font-family:var(--mono)}
+
+/* ---------- Results ---------- */
+#results{display:none}
+.tabs{display:flex;gap:4px;flex-wrap:wrap;padding:10px 16px 0;background:#FCFCFC;border-bottom:1px solid var(--line)}
+.tab{border:1px solid var(--line);border-bottom:0;background:#F1F1F1;color:var(--ink-soft);
+  border-radius:5px 5px 0 0;padding:7px 15px;font-size:12.5px;font-weight:600;cursor:pointer;position:relative;top:1px}
+.tab.on{background:#fff;color:var(--shell-red);border-color:var(--line);border-top:3px solid var(--shell-red);padding-top:5px}
+.tab .b{display:inline-block;min-width:17px;margin-left:6px;background:var(--shell-red);color:#fff;
+  font-size:10px;border-radius:9px;padding:1px 5px;font-weight:700}
+.tab.on .b{background:var(--shell-red)}
+
+.meta{display:flex;flex-wrap:wrap;gap:4px 0;padding:12px 16px;background:#FFFDF2;border-bottom:1px solid var(--line)}
+.mi{width:25%;min-width:190px;font-size:12px}
+.mi b{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.7px;color:#8A7400}
+.mi span{font-family:var(--mono);font-size:12px}
+
+.banner{padding:9px 16px;font-size:12.5px;font-weight:600;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.banner.good{background:#E9F6EC;color:var(--ok);border-bottom:1px solid #C6E6CE}
+.banner.bad{background:#FFF7E6;color:var(--warn);border-bottom:1px solid #F0DDB4}
+
+.tw{overflow:auto;max-height:62vh}
+table{border-collapse:collapse;width:100%;font-size:12px}
+thead th{position:sticky;top:0;z-index:2;background:var(--shell-red);color:#fff;font-weight:700;
+  padding:8px 8px;text-align:right;white-space:nowrap;font-size:11px;letter-spacing:.3px;border-right:1px solid #C4181C}
+thead th:nth-child(1),thead th:nth-child(2),thead th:nth-child(3){text-align:left}
+tbody td{padding:5px 8px;border-bottom:1px solid #EFEFEF;border-right:1px solid #F5F5F5;
+  text-align:right;font-family:var(--mono);white-space:nowrap}
+tbody td.t{text-align:left;font-family:inherit}
+tbody td.rn{text-align:center;color:#B0B0B0;font-size:10.5px;width:34px}
+tbody tr:nth-child(even){background:#FCFCFC}
+tbody tr:hover{background:#FFFBEA}
+tbody tr.total{background:var(--shell-yellow)!important;font-weight:700}
+tbody tr.total td{border-top:2px solid var(--shell-red);padding:7px 8px}
+td[contenteditable]:focus{outline:2px solid var(--shell-red);outline-offset:-2px;background:#fff}
+td.flag{background:#FFF1F1;color:var(--shell-red-dark);font-weight:700;box-shadow:inset 0 0 0 1px #F3B9BA}
+td.fixed{background:#EFF7FF;color:#0B5394;font-weight:700}
+tbody tr.rowbad td.t{border-left:3px solid var(--shell-red)}
+
+.legend{padding:8px 16px;font-size:11.5px;color:var(--ink-soft);display:flex;gap:16px;flex-wrap:wrap;
+  border-top:1px solid var(--line);background:#FCFCFC}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+
+.raw{padding:12px 16px;border-top:1px solid var(--line)}
+.raw summary{cursor:pointer;font-size:12.5px;font-weight:600;color:var(--shell-red)}
+.raw pre{font-family:var(--mono);font-size:11px;background:#2C2C2C;color:#E8E8E8;padding:12px;
+  border-radius:4px;overflow:auto;max-height:280px;margin:10px 0 0;white-space:pre}
+
+footer{max-width:1280px;margin:0 auto;padding:0 24px 40px;font-size:11.5px;color:#8A8A8A}
+footer b{color:var(--shell-red)}
+.note{background:#FFFDF2;border-left:3px solid var(--shell-yellow);padding:9px 12px;font-size:12px;
+  color:#6B5B00;border-radius:0 4px 4px 0;margin-top:12px}
+@media(max-width:640px){.mi{width:50%}.head-inner{gap:12px}h1{font-size:17px}}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="head-inner">
+    <div class="logo" id="logo">
+      <img src="companylogo.ico" alt="Shell" id="logoimg">
+    </div>
+    <div>
+      <h1>MTD Stock Report → Excel Converter</h1>
+      <p class="sub">Terminal Inventory Reconciliation Utility</p>
+    </div>
+    <span class="pill">Runs 100% in your browser</span>
+  </div>
+</header>
+
+<main>
+
+  <!-- 1. UPLOAD -->
+  <section class="card">
+    <div class="card-h"><span class="n">1</span><h2>Add report files</h2></div>
+    <div class="card-b">
+      <div id="drop">
+        <div class="big">Drop files here, or click to browse</div>
+        <div class="small">Screenshots, scans, PDFs, Word docs and existing spreadsheets all work. Add as many pages as you like.</div>
+        <div class="types">
+          <span class="type">PNG</span><span class="type">JPG</span><span class="type">WEBP</span>
+          <span class="type">BMP</span><span class="type">TIF</span><span class="type">PDF</span>
+          <span class="type">DOCX</span><span class="type">XLSX</span><span class="type">XLS</span>
+          <span class="type">CSV</span><span class="type">TXT</span>
+        </div>
+      </div>
+      <input type="file" id="picker" multiple accept=".png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff,.gif,.pdf,.docx,.doc,.xlsx,.xlsm,.xls,.csv,.txt" hidden>
+      <div id="files"></div>
+    </div>
+  </section>
+
+  <!-- 2. OPTIONS -->
+  <section class="card">
+    <div class="card-h"><span class="n">2</span><h2>Conversion settings</h2></div>
+    <div class="card-b">
+      <div class="opts">
+        <label class="opt">
+          <input type="checkbox" id="optRepair" checked>
+          <span><span class="h">Auto-repair misread digits</span>
+          <span class="d">Uses the report's own arithmetic (Close Book = movements, Gain/Loss = Gauge − Book) to recover a single bad cell per row.</span></span>
+        </label>
+        <label class="opt">
+          <input type="checkbox" id="optValidate" checked>
+          <span><span class="h">Add a Validation sheet</span>
+          <span class="d">Lists every row that fails a balance check plus column totals vs. the report's Total line.</span></span>
+        </label>
+        <label class="opt">
+          <input type="checkbox" id="optCombined" checked>
+          <span><span class="h">Add a Combined sheet</span>
+          <span class="d">All pages stacked into one table with terminal, month and source-file columns.</span></span>
+        </label>
+        <label class="opt">
+          <input type="checkbox" id="optSharpen" checked>
+          <span><span class="h">Sharpen images before reading</span>
+          <span class="d">Upscales and thresholds screenshots. Improves accuracy on small or compressed images.</span></span>
+        </label>
+      </div>
+      <div class="btn-row" style="margin-top:18px">
+        <button class="btn btn-red" id="go" disabled>Convert to Excel</button>
+        <button class="btn btn-ghost" id="clear" disabled>Clear all</button>
+      </div>
+      <div id="prog"><div class="bar"><i id="barfill"></i></div><div id="progtxt"></div></div>
+    </div>
+  </section>
+
+  <!-- 3. RESULTS -->
+  <section class="card" id="results">
+    <div class="card-h"><span class="n">3</span><h2>Review &amp; export</h2>
+      <div style="margin-left:auto" class="btn-row">
+        <button class="btn btn-yellow" id="dlxlsx">Download .xlsx</button>
+        <button class="btn btn-ghost" id="dlcsv">Download .csv</button>
+      </div>
+    </div>
+    <div class="tabs" id="tabs"></div>
+    <div id="pane"></div>
+    <div class="legend">
+      <span><i style="background:#FFF1F1;box-shadow:inset 0 0 0 1px #F3B9BA"></i>Failed a check — please verify</span>
+      <span><i style="background:#EFF7FF"></i>Auto-repaired from the row's arithmetic</span>
+      <span><i style="background:var(--shell-yellow)"></i>Report total line</span>
+      <span>Every cell is editable — click and type, then export.</span>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <b>Shell</b> MTD Stock Report Converter · No data leaves this page: OCR, parsing and Excel generation all run locally in your browser.
+  <div class="note">Tip: drop <code>companylogo.ico</code> (or <code>.png</code>) in the same folder as this file and the real logo replaces the placeholder mark automatically.</div>
+</footer>
+
+<script>
+/* ============================================================
+   Shell pecten fallback mark (used only if companylogo.ico is missing)
+   ============================================================ */
+const SHELL_SVG = `<svg viewBox="0 0 128 116" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:100%">
+<path fill="#DD1D21" d="M64 1C33 1 8 25 6 56l-4 34c-.4 3.4 2 6 5.4 6h22c2.6 0 4.7-1.9 5.1-4.4l.7-4.6c3.4 4.2 12.8 9 28.8 9s25.4-4.8 28.8-9l.7 4.6c.4 2.5 2.5 4.4 5.1 4.4h22c3.4 0 5.8-2.6 5.4-6l-4-34C120 25 95 1 64 1z"/>
+<g fill="#FBCE07">
+<path d="M64 88c-9 0-15-2-19-5l6-63c1-6 6-11 13-11s12 5 13 11l6 63c-4 3-10 5-19 5z"/>
+<path d="M41 81 33 22c-1-6 3-9 7-7 3 1 5 4 5 8l-4 58z"/>
+<path d="M87 81l8-59c1-6-3-9-7-7-3 1-5 4-5 8l4 58z"/>
+<path d="M27 74 15 34c-2-6 2-9 6-7 3 1 4 4 4 8l2 39z"/>
+<path d="M101 74l12-40c2-6-2-9-6-7-3 1-4 4-4 8l-2 39z"/>
+<path d="M18 88 8 62c-1-4 1-6 4-5 2 1 3 3 3 6l3 25z"/>
+<path d="M110 88l10-26c1-4-1-6-4-5-2 1-3 3-3 6l-3 25z"/>
+</g></svg>`;
+
+/* Swap in the fallback mark if companylogo.ico isn't sitting next to this file. */
+(function(){
+  const img=document.getElementById('logoimg'); if(!img) return;
+  const fallback=()=>{ const box=document.getElementById('logo'); if(box) box.innerHTML=SHELL_SVG; };
+  img.addEventListener('error',fallback);
+  if(img.complete && !img.naturalWidth) fallback();
+})();
+
+/* ============================================================
+   Parser — tuned to the Toptech TMS7 MTD STOCK REPORT layout
+   ============================================================ */
+const COLS = ['Product Code','Product Name','Open Balance','Receipts','Disposals Bulk',
+  'Disposals Non-Bulk','Company Use','Other','Stock Adj','Close Book','Gauge Total','Type',
+  'Gain/Loss','Percent Thruput'];
+const NUMCOLS = 11;                       // numeric columns per row (Type is text and often blank)
+const NUMNAMES = ['Open Balance','Receipts','Disposals Bulk','Disposals Non-Bulk','Company Use',
+  'Other','Stock Adj','Close Book','Gauge Total','Gain/Loss','Percent Thruput'];
+const I_OPEN=0,I_RCPT=1,I_DBULK=2,I_DNB=3,I_CUSE=4,I_OTHER=5,I_ADJ=6,I_BOOK=7,I_GAUGE=8,I_GL=9,I_PCT=10;
+
+function cleanNum(t){
+  let s=String(t==null?'':t).trim();
+  s=s.replace(/^[–—−~‐‑]/,'-');       // OCR dashes -> minus
+  s=s.replace(/[,\s ]/g,'');
+  s=s.replace(/^\((.*)\)$/,'-$1');                             // (123) -> -123
+  if(/^-?[\dOoIl|.]+$/.test(s)) s=s.replace(/[Oo]/g,'0').replace(/[Il|]/g,'1');
+  s=s.replace(/\.$/,'');
+  return s;
+}
+const isNum = t => { const s=cleanNum(t); return /^-?\d+(\.\d+)?$/.test(s); };
+const toNum = t => { const n=parseFloat(cleanNum(t)); return isNaN(n)?null:n; };
+
+/* Walk a row from the right collecting the numeric columns, leaving the product name behind. */
+function splitTail(rest,expected){
+  const tk=String(rest).trim().split(/\s+/).filter(Boolean);
+  const nums=[]; let type=''; let i=tk.length-1;
+  while(i>=0 && nums.length<expected){
+    const t=tk[i];
+    if(isNum(t)){ nums.unshift(t); i--; continue; }
+    if(!type && nums.length===2 && /^[A-Za-z]{1,3}$/.test(t)){ type=t.toUpperCase(); i--; continue; }
+    break;
+  }
+  return {name:tk.slice(0,i+1).join(' '),nums,type,complete:nums.length===expected};
+}
+
+function parseReport(rawLines){
+  const meta={}, rows=[]; let total=null; const unparsed=[];
+  const lines=rawLines.map(l=>String(l==null?'':l).replace(/\t/g,'  ').replace(/\s+$/,''));
+
+  for(const line of lines){
+    const t=line.trim();
+    if(!t || /^[-=_.\s|]+$/.test(t)) continue;
+    let m;
+
+    /* ---- report header metadata ---- */
+    if((m=t.match(/\*{2,}\s*(.+?)\s*\*{2,}/))){
+      meta.system=m[1].trim();
+      const term=m[1].match(/([A-Za-z][A-Za-z0-9]*-[A-Za-z0-9]+)\s*$/);
+      if(term) meta.terminal=term[1].toUpperCase();
+    }
+    if((m=t.match(/\bDate:\s*([\d\/\-.]+)/i)))      meta.date=m[1];
+    if((m=t.match(/\bTime:\s*([\d:]+)/i)))          meta.time=m[1];
+    if((m=t.match(/\bPage:\s*(\S+)/i)))             meta.page=m[1];
+    if((m=t.match(/For\s+Month\s+of\s+([A-Za-z]+\s*\d{0,4})/i))) meta.month=m[1].trim();
+    if((m=t.match(/Activity\s+for:\s*(.+?)(?:\s{2,}|Supplier:|$)/i))) meta.activity=m[1].trim();
+    if((m=t.match(/Supplier:\s*(.+?)(?:\s{2,}|NET|GROSS|$)/i)))  meta.supplier=m[1].trim();
+    if(/NET\s+GALLONS/i.test(t))   meta.units='NET GALLONS';
+    if(/GROSS\s+GALLONS/i.test(t)) meta.units='GROSS GALLONS';
+    if(/MTD\s+STOCK\s+REPORT/i.test(t)) meta.report='MTD STOCK REPORT';
+    if(/\bSUMMARY\b/i.test(t) && t.length<24) meta.section='SUMMARY';
+
+    /* ---- skip column-heading lines ---- */
+    if(/^Product\b/i.test(t) && /Open|Balance|Receipt/i.test(t)) continue;
+    if(/Bulk\s+Non-?\s?Bulk/i.test(t)) continue;
+    if(/^Balance\b/i.test(t) && !/\d{3}/.test(t)) continue;
+    if(/^Use\b/i.test(t) && /Adj|Book/i.test(t)) continue;
+
+    /* ---- total line ---- */
+    if(/^Totals?\b/i.test(t)){
+      const r=splitTail(t.replace(/^Totals?\b/i,''),NUMCOLS);
+      if(r.nums.length>=3){
+        total={code:'',name:'Total',nums:padTo(r.nums.map(toNum),NUMCOLS),type:r.type,
+               complete:r.complete,isTotal:true,flags:[],fixed:[]};
+      }
+      continue;
+    }
+
+    /* ---- data line: 5–7 digit product code (tolerating O/l read for 0/1) ---- */
+    if((m=t.match(/^([\dOoIl|]{5,7})\s+(.+)$/))){
+      const code=m[1].replace(/[Oo]/g,'0').replace(/[Il|]/g,'1');
+      const r=splitTail(m[2],NUMCOLS);
+      if(r.nums.length>=3){
+        rows.push({code:code,name:r.name.replace(/\s+/g,' ').trim(),
+                   nums:padTo(r.nums.map(toNum),NUMCOLS),type:r.type,
+                   complete:r.complete,flags:[],fixed:[]});
+        continue;
+      }
+    }
+
+    if(/\d{3}/.test(t) && t.length>14 && !/Date:|Time:|Page:|Supplier:|Activity|Month/i.test(t))
+      unparsed.push(t);
+  }
+  return {meta,rows,total,unparsed};
+}
+/* Rows are read right-anchored, so a column the reader dropped is missing from the LEFT. */
+function padTo(a,n){ const o=a.slice(0,n); while(o.length<n) o.unshift(null); return o; }
+
+/* ============================================================
+   Validation + auto-repair using the report's own arithmetic
+     Close Book = Open + Receipts + DispBulk + DispNonBulk + CompanyUse + Other + StockAdj
+     Gain/Loss  = Gauge Total - Close Book
+   ============================================================ */
+const MOVE = [I_OPEN,I_RCPT,I_DBULK,I_DNB,I_CUSE,I_OTHER,I_ADJ];
+
+function validateRow(row,repair){
+  row.flags=[]; row.fixed=[];
+  const n=row.nums;
+  /* A short row means the reader lost a whole column — never guess at those, always flag. */
+  const canRepair = repair && row.complete!==false;
+
+  /* fill a lone missing cell in the balance equation */
+  const missing=[...MOVE,I_BOOK].filter(i=>n[i]===null);
+  if(canRepair && missing.length===1){ solveBalance(row,missing[0]); }
+
+  if(MOVE.every(i=>n[i]!==null) && n[I_BOOK]!==null){
+    const s=MOVE.reduce((a,i)=>a+n[i],0);
+    if(Math.abs(s-n[I_BOOK])>0.51){
+      const cands=balanceCandidates(n,s);
+      if(canRepair && applyBestCandidate(row,cands)){ /* repaired */ }
+      else if(cands.length>1 && cands.length<=4) cands.forEach(c=>row.flags.push(c.i));
+      else { MOVE.forEach(i=>row.flags.push(i)); row.flags.push(I_BOOK); }
+    }
+  }
+
+  /* Gain/Loss = Gauge - Book */
+  const g=n[I_GAUGE],b=n[I_BOOK],gl=n[I_GL];
+  if(g!==null&&b!==null&&gl!==null){
+    if(Math.abs((g-b)-gl)>0.51){
+      const c=[];
+      if(oneEditApart(gl,g-b))  c.push({i:I_GL,want:g-b,len:digits(gl)});
+      if(oneEditApart(g,b+gl))  c.push({i:I_GAUGE,want:b+gl,len:digits(g)});
+      if(!(canRepair && applyBestCandidate(row,c))) row.flags.push(I_GAUGE,I_BOOK,I_GL);
+    }
+  } else if(canRepair){
+    if(g!==null&&b!==null&&gl===null){ n[I_GL]=g-b; row.fixed.push(I_GL); }
+    else if(g===null&&b!==null&&gl!==null){ n[I_GAUGE]=b+gl; row.fixed.push(I_GAUGE); }
+  }
+
+  row.nums.forEach((v,i)=>{ if(v===null && !row.fixed.includes(i)) row.flags.push(i); });
+  row.flags=[...new Set(row.flags)];
+  row.ok=row.flags.length===0;
+  return row;
+}
+
+function solveBalance(row,idx){
+  const n=row.nums;
+  if(idx===I_BOOK) n[I_BOOK]=MOVE.reduce((a,i)=>a+(n[i]||0),0);
+  else n[idx]=n[I_BOOK]-MOVE.filter(i=>i!==idx).reduce((a,i)=>a+(n[i]||0),0);
+  row.fixed.push(idx);
+}
+
+/* Which single cells could be fixed by a one-character edit to make the row balance? */
+function balanceCandidates(n,sum){
+  const diff=n[I_BOOK]-sum, out=[];
+  for(const i of MOVE){ const want=n[i]+diff; if(oneEditApart(n[i],want)) out.push({i,want,len:digits(n[i])}); }
+  if(oneEditApart(n[I_BOOK],sum)) out.push({i:I_BOOK,want:sum,len:digits(n[I_BOOK])});
+  return out;
+}
+const digits=v=>String(Math.abs(v==null?0:v)).replace('.','').length;
+
+/* Apply a repair only when one candidate is unambiguously the likeliest misread:
+   a slip in a long figure is far more probable than in a lone 0. */
+function applyBestCandidate(row,cands){
+  if(!cands.length) return false;
+  const sorted=[...cands].sort((a,b)=>b.len-a.len);
+  if(sorted.length>1 && sorted[0].len===sorted[1].len) return false;
+  if(sorted[0].len<2) return false;
+  row.nums[sorted[0].i]=sorted[0].want;
+  row.fixed.push(sorted[0].i);
+  return true;
+}
+
+/* True when b can be produced from a by one digit substitution, insertion or deletion. */
+function oneEditApart(a,b){
+  if(a===null||b===null) return false;
+  if(!Number.isFinite(a)||!Number.isFinite(b)) return false;
+  if(Math.abs(a-b)<0.51) return false;
+  if(!Number.isInteger(a)||!Number.isInteger(b)) return false;
+  const sa=String(a), sb=String(b);
+  if(Math.abs(sa.length-sb.length)>1) return false;
+  if(sa.length===sb.length){
+    let d=0; for(let k=0;k<sa.length;k++) if(sa[k]!==sb[k]) d++;
+    return d===1;
+  }
+  const s=sa.length<sb.length?sa:sb, l=sa.length<sb.length?sb:sa;
+  for(let k=0;k<l.length;k++) if(l.slice(0,k)+l.slice(k+1)===s) return true;
+  return false;
+}
+
+function columnAudit(page){
+  const out=[];
+  if(!page.total) return out;
+  for(let c=0;c<NUMCOLS;c++){
+    if(c===I_PCT) continue;                            // percentages don't sum
+    if(page.total.nums[c]===null) continue;
+    const s=page.rows.reduce((a,r)=>a+(r.nums[c]||0),0);
+    const d=s-page.total.nums[c];
+    if(Math.abs(d)>0.51) out.push({col:NUMNAMES[c],rows:s,total:page.total.nums[c],diff:d});
+  }
+  return out;
+}
+
+/* ============================================================
+   File readers
+   ============================================================ */
+const IMG=/\.(png|jpe?g|webp|bmp|tiff?|gif)$/i, PDF=/\.pdf$/i,
+      DOC=/\.(docx?|rtf)$/i, SHEET=/\.(xlsx|xlsm|xltx|xls|csv|tsv)$/i, TXT=/\.(txt|log|prn|dat)$/i;
+
+let ocrWorker=null;
+async function getOcr(status){
+  if(ocrWorker) return ocrWorker;
+  status('Loading OCR engine (first run only)…');
+  ocrWorker=await Tesseract.createWorker('eng',1,{});
+  await ocrWorker.setParameters({
+    preserve_interword_spaces:'1',
+    tessedit_pageseg_mode:'6'                          // one uniform block of text
+  });
+  return ocrWorker;
+}
+
+/* Upscale + grayscale + threshold: terminal screenshots read far better this way. */
+function sharpen(bitmapOrImg,scale){
+  const w=bitmapOrImg.width||bitmapOrImg.naturalWidth, h=bitmapOrImg.height||bitmapOrImg.naturalHeight;
+  const s=scale||Math.min(3,Math.max(1.6,1400/Math.max(w,1)));
+  const c=document.createElement('canvas');
+  c.width=Math.round(w*s); c.height=Math.round(h*s);
+  const x=c.getContext('2d');
+  x.imageSmoothingEnabled=true; x.imageSmoothingQuality='high';
+  x.fillStyle='#fff'; x.fillRect(0,0,c.width,c.height);
+  x.drawImage(bitmapOrImg,0,0,c.width,c.height);
+  const d=x.getImageData(0,0,c.width,c.height), p=d.data;
+  for(let i=0;i<p.length;i+=4){
+    const g=0.299*p[i]+0.587*p[i+1]+0.114*p[i+2];
+    const v=g>176?255:(g<110?0:g);
+    p[i]=p[i+1]=p[i+2]=v;
+  }
+  x.putImageData(d,0,0);
+  return c;
+}
+
+async function readImage(file,status,sharp){
+  const w=await getOcr(status);
+  status('Reading text from '+file.name+'…');
+  let src=file;
+  if(sharp){
+    try{ const bmp=await createImageBitmap(file); src=sharpen(bmp); }catch(e){ src=file; }
+  }
+  const res=await w.recognize(src);
+  return [{label:stripExt(file.name),lines:res.data.text.split(/\r?\n/)}];
+}
+
+async function readPdf(file,status,sharp){
+  pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  const buf=await file.arrayBuffer();
+  const doc=await pdfjsLib.getDocument({data:buf}).promise;
+  const pages=[];
+  for(let p=1;p<=doc.numPages;p++){
+    status('Reading '+file.name+' page '+p+' of '+doc.numPages+'…');
+    const page=await doc.getPage(p);
+    const tc=await page.getTextContent();
+    let lines=textLayerToLines(tc);
+    const chars=lines.join('').replace(/\s/g,'').length;
+    if(chars<40){                                       // scanned page -> OCR the render
+      status('Page '+p+' is a scan — running OCR…');
+      const vp=page.getViewport({scale:2.4});
+      const c=document.createElement('canvas'); c.width=vp.width; c.height=vp.height;
+      await page.render({canvasContext:c.getContext('2d'),viewport:vp}).promise;
+      const w=await getOcr(status);
+      const res=await w.recognize(sharp?sharpen(c,1):c);
+      lines=res.data.text.split(/\r?\n/);
+    }
+    pages.push({label:stripExt(file.name)+' p'+p,lines});
+  }
+  return pages;
+}
+
+/* Rebuild fixed-width lines from a PDF text layer using x/y geometry. */
+function textLayerToLines(tc){
+  const items=tc.items.filter(i=>i.str && i.str.trim()!=='');
+  if(!items.length) return [];
+  const rows=new Map();
+  let minX=Infinity,maxX=-Infinity;
+  for(const it of items){
+    const y=Math.round(it.transform[5]/2)*2, x=it.transform[4];
+    minX=Math.min(minX,x); maxX=Math.max(maxX,x+(it.width||0));
+    if(!rows.has(y)) rows.set(y,[]);
+    rows.get(y).push({x,s:it.str});
+  }
+  const span=Math.max(maxX-minX,1), cw=span/118;        // ~118 char grid, matches the report width
+  return [...rows.keys()].sort((a,b)=>b-a).map(y=>{
+    const cells=rows.get(y).sort((a,b)=>a.x-b.x);
+    let line='';
+    for(const c of cells){
+      const col=Math.max(0,Math.round((c.x-minX)/cw));
+      if(col>line.length) line+=' '.repeat(col-line.length);
+      else if(line.length && !/\s$/.test(line)) line+=' ';
+      line+=c.s;
+    }
+    return line;
+  });
+}
+
+async function readDocx(file,status){
+  status('Extracting text from '+file.name+'…');
+  const buf=await file.arrayBuffer();
+  const r=await mammoth.extractRawText({arrayBuffer:buf});
+  let lines=r.value.split(/\r?\n/);
+  /* Word tables come out one cell per line — stitch runs of short lines back into rows. */
+  if(lines.filter(l=>/^\d{5,7}$/.test(l.trim())).length>2) lines=restitch(lines);
+  return [{label:stripExt(file.name),lines}];
+}
+/* Word/PDF tables arrive one cell per line. A row is: product code, product name,
+   then the numeric columns — so start at a code followed by a non-numeric name cell. */
+function restitch(lines){
+  const t=lines.map(x=>String(x==null?'':x).trim()).filter(x=>x!=='');
+  const isCodeStart=i=>/^\d{5,7}$/.test(t[i]) && i+1<t.length && !isNum(t[i+1]);
+  const out=[]; let i=0;
+  while(i<t.length){
+    if(isCodeStart(i)){
+      let end=Math.min(i+1+1+NUMCOLS,t.length);       // code + name + numeric columns
+      for(let j=i+2;j<end;j++) if(isCodeStart(j)){ end=j; break; }
+      out.push(t.slice(i,end).join('  '));
+      i=end;
+    } else { out.push(t[i]); i++; }
+  }
+  return out;
+}
+
+async function readSheet(file,status){
+  status('Reading spreadsheet '+file.name+'…');
+  const buf=await file.arrayBuffer();
+  const wb=XLSX.read(buf,{type:'array',cellDates:false,raw:true});
+  const pages=[];
+  for(const name of wb.SheetNames){
+    const aoa=XLSX.utils.sheet_to_json(wb.Sheets[name],{header:1,raw:true,defval:''});
+    const lines=aoa.map(r=>r.map(c=>{
+      if(c===''||c==null) return '';
+      if(typeof c==='number') return String(c);
+      return String(c).replace(/\s+/g,' ').trim();
+    }).join('   ').replace(/\s+$/,''));
+    pages.push({label:stripExt(file.name)+(wb.SheetNames.length>1?' · '+name:''),lines});
+  }
+  return pages;
+}
+
+async function readTxt(file,status){
+  status('Reading '+file.name+'…');
+  return [{label:stripExt(file.name),lines:(await file.text()).split(/\r?\n/)}];
+}
+const stripExt=n=>n.replace(/\.[^.]+$/,'');
+
+async function readAny(file,status,sharp){
+  if(IMG.test(file.name))   return readImage(file,status,sharp);
+  if(PDF.test(file.name))   return readPdf(file,status,sharp);
+  if(DOC.test(file.name))   return readDocx(file,status);
+  if(SHEET.test(file.name)) return readSheet(file,status);
+  if(TXT.test(file.name))   return readTxt(file,status);
+  if(file.type.startsWith('image/')) return readImage(file,status,sharp);
+  throw new Error('Unsupported file type');
+}
+
+/* ============================================================
+   App state + UI
+   ============================================================ */
+const state={files:[],pages:[],active:0};
+const $=id=>document.getElementById(id);
+const drop=$('drop'),picker=$('picker');
+
+drop.addEventListener('click',()=>picker.click());
+drop.addEventListener('dragover',e=>{e.preventDefault();drop.classList.add('over')});
+drop.addEventListener('dragleave',()=>drop.classList.remove('over'));
+drop.addEventListener('drop',e=>{e.preventDefault();drop.classList.remove('over');addFiles(e.dataTransfer.files)});
+picker.addEventListener('change',e=>{addFiles(e.target.files);picker.value=''});
+
+function addFiles(list){
+  for(const f of list) state.files.push({file:f,status:'wait'});
+  renderFiles();
+}
+function renderFiles(){
+  const box=$('files');
+  box.style.display=state.files.length?'block':'none';
+  box.innerHTML=state.files.map((f,i)=>{
+    const kb=f.file.size<1048576?(f.file.size/1024).toFixed(0)+' KB':(f.file.size/1048576).toFixed(1)+' MB';
+    const lbl={wait:'Queued',run:'Working',done:'Read',err:'Failed'}[f.status];
+    return `<div class="f"><span class="nm">${esc(f.file.name)}</span><span class="sz">${kb}</span>
+      <span class="st ${f.status}">${lbl}${f.status==='err'&&f.msg?': '+esc(f.msg):''}</span>
+      <button class="x" data-i="${i}" title="Remove">&times;</button></div>`;
+  }).join('');
+  box.querySelectorAll('.x').forEach(b=>b.onclick=e=>{
+    e.stopPropagation(); state.files.splice(+b.dataset.i,1); renderFiles();
+  });
+  $('go').disabled=!state.files.length;
+  $('clear').disabled=!state.files.length;
+}
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+$('clear').onclick=()=>{state.files=[];state.pages=[];renderFiles();$('results').style.display='none'};
+
+/* ---- run ---- */
+$('go').onclick=async()=>{
+  const repair=$('optRepair').checked, sharp=$('optSharpen').checked;
+  $('go').disabled=true; $('clear').disabled=true;
+  $('prog').style.display='block';
+  state.pages=[];
+  const status=t=>$('progtxt').textContent=t;
+  const setBar=p=>$('barfill').style.width=p+'%';
+
+  for(let i=0;i<state.files.length;i++){
+    const f=state.files[i];
+    f.status='run'; f.msg=''; renderFiles();
+    setBar(Math.round(i/state.files.length*100));
+    try{
+      const raw=await readAny(f.file,status,sharp);
+      for(const r of raw){
+        const parsed=parseReport(r.lines);
+        parsed.rows.forEach(row=>validateRow(row,repair));
+        if(parsed.total) validateRow(parsed.total,false);
+        state.pages.push({
+          label:r.label, source:f.file.name, lines:r.lines,
+          meta:parsed.meta, rows:parsed.rows, total:parsed.total,
+          unparsed:parsed.unparsed, audit:null
+        });
+      }
+      f.status='done';
+    }catch(err){
+      f.status='err'; f.msg=err.message||'error'; console.error(err);
+    }
+    renderFiles();
+  }
+  setBar(100); status('Done — '+state.pages.length+' page(s) parsed.');
+  state.pages.forEach(p=>p.audit=columnAudit(p));
+  state.active=0;
+  renderResults(true);
+  $('go').disabled=false; $('clear').disabled=false;
+  setTimeout(()=>{$('prog').style.display='none';setBar(0)},1400);
+};
+
+/* ---- results ---- */
+function renderResults(scroll){
+  if(!state.pages.length){$('results').style.display='none';return}
+  $('results').style.display='block';
+  $('tabs').innerHTML=state.pages.map((p,i)=>{
+    const bad=p.rows.filter(r=>!r.ok).length;
+    return `<button class="tab ${i===state.active?'on':''}" data-i="${i}">${esc(p.label)}
+      ${bad?`<span class="b">${bad}</span>`:''}</button>`;
+  }).join('');
+  $('tabs').querySelectorAll('.tab').forEach(b=>b.onclick=()=>{state.active=+b.dataset.i;renderResults(true)});
+  renderPane(state.pages[state.active]);
+  if(scroll && $('results').scrollIntoView) $('results').scrollIntoView({behavior:'smooth',block:'start'});
+}
+
+function renderPane(p){
+  const m=p.meta;
+  const mi=(k,v)=>v?`<div class="mi"><b>${k}</b><span>${esc(v)}</span></div>`:'';
+  const bad=p.rows.filter(r=>!r.ok).length, fx=p.rows.reduce((a,r)=>a+r.fixed.length,0);
+
+  let banner;
+  if(!p.rows.length){
+    banner=`<div class="banner bad">No report rows recognised on this page. Check the raw text below — the tool looks for lines starting with a 5–7 digit product code.</div>`;
+  }else if(bad===0 && (!p.audit||!p.audit.length)){
+    banner=`<div class="banner good">✓ ${p.rows.length} product rows — every row balances and all column totals match the report's Total line.
+      ${fx?`<span style="color:#0B5394">${fx} cell(s) auto-repaired.</span>`:''}</div>`;
+  }else{
+    const audit=(p.audit||[]).map(a=>`${a.col} off by ${fmt(a.diff)}`).join(' · ');
+    banner=`<div class="banner bad">⚠ ${p.rows.length} rows read${bad?`, ${bad} ${bad===1?'needs':'need'} a look`:''}${audit?` — column check: ${esc(audit)}`:''}.
+      ${fx?`<span style="color:#0B5394">${fx} cell(s) auto-repaired.</span>`:''} Edit any cell below before exporting.</div>`;
+  }
+
+  const head=`<tr><th></th><th>Product Code</th><th>Product Name</th>`+
+    NUMNAMES.slice(0,9).map(h=>`<th>${h}</th>`).join('')+
+    `<th>Type</th><th>Gain/Loss</th><th>Percent Thruput</th></tr>`;
+
+  const body=p.rows.map((r,ri)=>rowHtml(r,ri,false)).join('')+
+             (p.total?rowHtml(p.total,-1,true):'');
+
+  $('pane').innerHTML=`
+    <div class="meta">
+      ${mi('Terminal',m.terminal)}${mi('Report',m.report||'MTD Stock Report')}
+      ${mi('Month',m.month)}${mi('Units',m.units)}
+      ${mi('Activity for',m.activity)}${mi('Supplier',m.supplier)}
+      ${mi('Run date',[m.date,m.time].filter(Boolean).join(' '))}${mi('Page',m.page)}
+      ${mi('Source file',p.source)}
+    </div>
+    ${banner}
+    <div class="tw"><table><thead>${head}</thead><tbody>${body}</tbody></table></div>
+    <details class="raw"><summary>Show the raw text this page was read as (${p.lines.length} lines${p.unparsed.length?', '+p.unparsed.length+' unmatched':''})</summary>
+      <pre>${esc(p.lines.join('\n'))}</pre></details>`;
+
+  $('pane').querySelectorAll('td[contenteditable]').forEach(td=>{
+    td.addEventListener('blur',()=>commit(p,td));
+    td.addEventListener('keydown',e=>{ if(e.key==='Enter'){e.preventDefault();td.blur();} });
+  });
+}
+
+function rowHtml(r,ri,isTotal){
+  const cell=(ci,val)=>{
+    const cls=[ 'num',
+      r.flags.includes(ci)?'flag':'',
+      r.fixed.includes(ci)?'fixed':'' ].filter(Boolean).join(' ');
+    return `<td class="${cls}" contenteditable data-r="${ri}" data-c="${ci}">${val===null?'':fmt(val,ci)}</td>`;
+  };
+  const nums9=r.nums.slice(0,9).map((v,i)=>cell(i,v)).join('');
+  return `<tr class="${isTotal?'total':''} ${!isTotal&&!r.ok?'rowbad':''}">
+    <td class="rn">${isTotal?'':ri+1}</td>
+    <td class="t" contenteditable data-r="${ri}" data-c="code">${esc(r.code||'')}</td>
+    <td class="t" contenteditable data-r="${ri}" data-c="name">${esc(r.name||'')}</td>
+    ${nums9}
+    <td class="t" contenteditable data-r="${ri}" data-c="type" style="text-align:center">${esc(r.type||'')}</td>
+    ${cell(I_GL,r.nums[I_GL])}${cell(I_PCT,r.nums[I_PCT])}</tr>`;
+}
+
+function fmt(v,ci){
+  if(v===null||v===undefined||v==='') return '';
+  if(ci===I_PCT) return Number(v).toFixed(2);
+  return Number.isInteger(v)?v.toLocaleString('en-US'):Number(v).toFixed(2);
+}
+
+function commit(page,td){
+  const ri=+td.dataset.r, c=td.dataset.c;
+  const row=ri<0?page.total:page.rows[ri];
+  if(!row) return;
+  const txt=td.textContent.trim();
+  if(c==='code'||c==='name'||c==='type'){ row[c]=txt; return; }
+  const ci=+c;
+  row.nums[ci]=txt===''?null:toNum(txt);
+  row.fixed=row.fixed.filter(i=>i!==ci);
+  validateRow(row,false);
+  page.audit=columnAudit(page);
+  renderResults();
+}
+
+/* ============================================================
+   Export
+   ============================================================ */
+const SHEET_COLS=[{wch:14},{wch:26},{wch:14},{wch:12},{wch:14},{wch:17},{wch:13},{wch:14},
+                  {wch:12},{wch:14},{wch:14},{wch:7},{wch:12},{wch:15}];
+
+function rowArray(r){
+  return [ r.code||'', r.name||'', ...r.nums.slice(0,9), r.type||'', r.nums[I_GL], r.nums[I_PCT] ];
+}
+
+function pageAoa(p,withMeta){
+  const a=[]; const m=p.meta;
+  if(withMeta){
+    a.push([ (m.report||'MTD STOCK REPORT') + (m.terminal?'  —  '+m.terminal:'') ]);
+    a.push(['Month',m.month||'','Units',m.units||'','Run',[m.date,m.time].filter(Boolean).join(' ')]);
+    a.push(['Activity for',m.activity||'','Supplier',m.supplier||'','Page',m.page||'']);
+    a.push(['Source file',p.source||'']);
+    a.push([]);
+  }
+  a.push(COLS);
+  p.rows.forEach(r=>a.push(rowArray(r)));
+  if(p.total){ a.push([]); a.push(rowArray(p.total)); }
+  return a;
+}
+
+function safeName(s,used){
+  let n=String(s).replace(/[\\\/\?\*\[\]:]/g,'-').slice(0,28)||'Sheet';
+  let base=n,k=2; while(used.has(n)){ n=(base.slice(0,25)+'_'+k++); } used.add(n); return n;
+}
+
+/* Thousands separators on the money columns, 2dp on Percent Thruput. */
+function formatNumbers(ws,offset){
+  const ref=ws['!ref']; if(!ref) return;
+  const R=XLSX.utils.decode_range(ref);
+  for(let r=R.s.r;r<=R.e.r;r++){
+    for(let c=R.s.c;c<=R.e.c;c++){
+      const cell=ws[XLSX.utils.encode_cell({r,c})];
+      if(!cell||cell.t!=='n') continue;
+      const dataCol=c-offset;
+      cell.z = (dataCol===13) ? '0.00' : '#,##0';
+    }
+  }
+}
+
+function buildWorkbook(){
+  const wb=XLSX.utils.book_new(), used=new Set();
+  state.pages.forEach(p=>{
+    const ws=XLSX.utils.aoa_to_sheet(pageAoa(p,true));
+    ws['!cols']=SHEET_COLS;
+    formatNumbers(ws,0);
+    XLSX.utils.book_append_sheet(wb,ws,safeName(p.label,used));
+  });
+
+  if($('optCombined').checked && state.pages.length){
+    const a=[['Source File','Terminal','Month','Page',...COLS]];
+    state.pages.forEach(p=>p.rows.forEach(r=>a.push(
+      [p.source||p.label,p.meta.terminal||'',p.meta.month||'',p.meta.page||'',...rowArray(r)])));
+    const ws=XLSX.utils.aoa_to_sheet(a);
+    ws['!cols']=[{wch:26},{wch:15},{wch:10},{wch:7},...SHEET_COLS];
+    ws['!autofilter']={ref:XLSX.utils.encode_range({s:{r:0,c:0},e:{r:a.length-1,c:17}})};
+    formatNumbers(ws,4);
+    XLSX.utils.book_append_sheet(wb,ws,safeName('Combined',used));
+  }
+
+  if($('optValidate').checked){
+    const a=[['Validation report','generated '+new Date().toLocaleString()],[],
+             ['Page','Product Code','Product Name','Check','Detail']];
+    let issues=0;
+    state.pages.forEach(p=>{
+      p.rows.forEach(r=>{
+        if(r.ok && !r.fixed.length) return;
+        const n=r.nums, s=MOVE.reduce((x,i)=>x+(n[i]||0),0);
+        if(!r.ok){ issues++; a.push([p.label,r.code,r.name,'Row balance',
+          'Movements sum to '+s+' but Close Book reads '+n[I_BOOK]]); }
+        if(r.fixed.length) a.push([p.label,r.code,r.name,'Auto-repaired',
+          r.fixed.map(i=>NUMNAMES[i]).join(', ')]);
+      });
+      (p.audit||[]).forEach(x=>{ issues++;
+        a.push([p.label,'','','Column total',x.col+': rows sum '+x.rows+' vs report total '+x.total+' (diff '+x.diff+')']); });
+      if(p.unparsed.length) a.push([p.label,'','','Unmatched line',p.unparsed.length+' line(s) not recognised as data']);
+    });
+    if(a.length===3) a.push(['','','','All checks passed','Every row balances and all column totals reconcile against the report Total line']);
+    a.splice(1,0,['Open issues',issues]);
+    const ws=XLSX.utils.aoa_to_sheet(a);
+    ws['!cols']=[{wch:24},{wch:14},{wch:26},{wch:16},{wch:70}];
+    XLSX.utils.book_append_sheet(wb,ws,safeName('Validation',used));
+  }
+  return wb;
+}
+
+function baseFileName(){
+  const p=state.pages[0]||{meta:{}};
+  const bits=['MTD_Stock',p.meta.terminal,p.meta.month].filter(Boolean);
+  return bits.join('_').replace(/\s+/g,'')+'_'+new Date().toISOString().slice(0,10);
+}
+
+$('dlxlsx').onclick=()=>{
+  if(!state.pages.length) return;
+  XLSX.writeFile(buildWorkbook(),baseFileName()+'.xlsx',{compression:true});
+};
+$('dlcsv').onclick=()=>{
+  if(!state.pages.length) return;
+  const a=[['Source File','Terminal','Month','Page',...COLS]];
+  state.pages.forEach(p=>{
+    p.rows.forEach(r=>a.push([p.source||p.label,p.meta.terminal||'',p.meta.month||'',p.meta.page||'',...rowArray(r)]));
+    if(p.total) a.push([p.source||p.label,p.meta.terminal||'',p.meta.month||'',p.meta.page||'',...rowArray(p.total)]);
+  });
+  const csv=XLSX.utils.sheet_to_csv(XLSX.utils.aoa_to_sheet(a));
+  const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
+  const el=document.createElement('a'); el.href=url; el.download=baseFileName()+'.csv';
+  document.body.appendChild(el); el.click(); el.remove(); URL.revokeObjectURL(url);
+};
+
+window.addEventListener('beforeunload',()=>{ if(ocrWorker) try{ocrWorker.terminate()}catch(e){} });
+</script>
+</body>
+</html>
